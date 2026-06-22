@@ -1,0 +1,3 @@
+# Install as /etc/sudoers.d/deploy-manager with mode 0440.
+# The deploy-app-run wrapper validates app ids and maps them to /etc/deploy-manager/apps/<app>.env.
+deploy-manager ALL=(root) NOPASSWD: /usr/local/sbin/deploy-app-run *

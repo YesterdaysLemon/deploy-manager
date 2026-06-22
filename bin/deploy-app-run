@@ -1,0 +1,36 @@
+#!/usr/bin/env sh
+set -eu
+
+APP_ID="${1:-}"
+REQUESTED_SHA="${2:-}"
+ENV_ROOT="${DEPLOY_MANAGER_APP_ENV_ROOT:-/etc/deploy-manager/apps}"
+DEPLOY_MANAGER_HOME="${DEPLOY_MANAGER_HOME:-/opt/deploy-manager}"
+
+case "$APP_ID" in
+  ""|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*)
+    echo "deploy-app-run: invalid app id" >&2
+    exit 64
+    ;;
+esac
+
+case "$REQUESTED_SHA" in
+  ""|*[!0123456789abcdefABCDEF]*)
+    echo "deploy-app-run: expected a 40-character git SHA" >&2
+    exit 64
+    ;;
+esac
+
+if [ "${#REQUESTED_SHA}" -ne 40 ]; then
+  echo "deploy-app-run: expected a 40-character git SHA" >&2
+  exit 64
+fi
+
+ENV_FILE="${ENV_ROOT}/${APP_ID}.env"
+
+if [ ! -r "$ENV_FILE" ]; then
+  echo "deploy-app-run: missing app env file: $ENV_FILE" >&2
+  exit 66
+fi
+
+export ENV_FILE
+exec "${DEPLOY_MANAGER_HOME}/bin/deploy-app.sh" "$REQUESTED_SHA"

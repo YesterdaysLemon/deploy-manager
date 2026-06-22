@@ -1,0 +1,15 @@
+alirezaafshan.com {
+  reverse_proxy 127.0.0.1:3000
+}
+
+fish.alirezaafshan.com {
+  reverse_proxy 127.0.0.1:3010
+}
+
+birds.alirezaafshan.com {
+  reverse_proxy 127.0.0.1:3020
+}
+
+deploy.alirezaafshan.com {
+  reverse_proxy 127.0.0.1:9000
+}

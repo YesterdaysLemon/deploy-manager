@@ -1,0 +1,22 @@
+{
+  "apps": {
+    "website": {
+      "repo": "your-github-user/website",
+      "branch": "master",
+      "event": "push",
+      "secretEnv": "WEBSITE_DEPLOY_WEBHOOK_SECRET"
+    },
+    "aquarium": {
+      "repo": "your-github-user/aquarium",
+      "branch": "master",
+      "event": "push",
+      "secretEnv": "AQUARIUM_DEPLOY_WEBHOOK_SECRET"
+    },
+    "birds": {
+      "repo": "your-github-user/birdoftheday",
+      "branch": "master",
+      "event": "push",
+      "secretEnv": "BIRDS_DEPLOY_WEBHOOK_SECRET"
+    }
+  }
+}
