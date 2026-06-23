@@ -12,29 +12,29 @@ webhook manager as the entrypoint:
 
 ```yaml
 services:
-  website:
+  portfolio:
     build:
-      context: /opt/website/app
-    image: website-app
-    container_name: website-app
+      context: /opt/portfolio/app
+    image: portfolio-app
+    container_name: portfolio-app
     restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
 
-  aquarium:
+  app-one:
     build:
-      context: /opt/aquarium/app
-    image: aquarium-app
-    container_name: aquarium-app
+      context: /opt/app-one/app
+    image: app-one
+    container_name: app-one
     restart: unless-stopped
     ports:
       - "127.0.0.1:3010:3000"
 
-  birds:
+  app-two:
     build:
-      context: /opt/birdoftheday/app
-    image: birdoftheday-app
-    container_name: birdoftheday-app
+      context: /opt/app-two/app
+    image: app-two
+    container_name: app-two
     restart: unless-stopped
     ports:
       - "127.0.0.1:3020:3000"

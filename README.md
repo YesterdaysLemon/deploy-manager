@@ -1,40 +1,43 @@
 # Deploy Manager
 
-Central webhook and Docker rollout manager for small VPS-hosted webapps.
+Central webhook and Docker rollout manager for small VPS-hosted web apps.
 
-It lets one VPS run independent Dockerized apps on separate subdomains:
+The manager lets one server run independent Dockerized apps on separate
+subdomains while keeping deployment logic in one place:
 
 ```text
-alirezaafshan.com        -> 127.0.0.1:3000  website
-fish.alirezaafshan.com   -> 127.0.0.1:3010  aquarium
-birds.alirezaafshan.com  -> 127.0.0.1:3020  birdoftheday
+example.com         -> 127.0.0.1:3000  portfolio
+app-one.example.com -> 127.0.0.1:3010  app-one
+app-two.example.com -> 127.0.0.1:3020  app-two
+deploy.example.com  -> 127.0.0.1:9000  deploy manager
 ```
 
 Each app keeps its own Git repo and Dockerfile. This repo provides the central
-webhook, the shared Docker rollout script, systemd/sudo examples, Caddy examples,
-and a GitHub Actions workflow template.
+signed webhook, the shared Docker rollout script, systemd/sudo examples, Caddy
+examples, and a GitHub Actions workflow template.
 
 ## Architecture
 
 ```text
 GitHub Actions
-  POST /deploy/aquarium
+  POST /deploy/app-one
         |
         v
 Central webhook, unprivileged deploy-manager user
         |
         v
-sudo /usr/local/sbin/deploy-app-run aquarium <sha>
+sudo /usr/local/sbin/deploy-app-run app-one <sha>
         |
         v
-/etc/deploy-manager/apps/aquarium.env
+/etc/deploy-manager/apps/app-one.env
         |
         v
 docker build, candidate health check, production swap, rollback on failure
 ```
 
-The public app traffic still goes through Caddy to local-only Docker ports. The
-deploy webhook should also be proxied by Caddy to a loopback-only manager port.
+The public app traffic should go through a reverse proxy such as Caddy to
+local-only Docker ports. The deploy webhook should also be proxied to a
+loopback-only manager port.
 
 ## Files
 
@@ -42,10 +45,12 @@ deploy webhook should also be proxied by Caddy to a loopback-only manager port.
 - `bin/deploy-app.sh`: generic Docker deployment script.
 - `bin/deploy-app-run`: root-side wrapper that maps app IDs to env files.
 - `bin/deploy-manager-sudo`: unprivileged wrapper used by the webhook process.
-- `examples/apps.json`: allowlisted apps and their GitHub repo names.
+- `scripts/deploy-app-now.sh`: optional manual deploy helper for an app ID.
+- `examples/apps.json`: allowlisted apps and GitHub repo names.
 - `examples/apps/*.env`: per-app deployment settings.
 - `examples/github-actions/deploy.yml`: workflow template for app repos.
 - `examples/caddy/Caddyfile`: public app and deploy webhook routing example.
+- `install/install-on-vps.sh`: simple installer for a fresh VPS setup.
 - `install/systemd/deploy-manager.service`: systemd unit example.
 - `install/sudoers/deploy-manager`: narrow sudoers example.
 
@@ -58,58 +63,28 @@ sudo mkdir -p /opt/deploy-manager
 sudo rsync -a ./ /opt/deploy-manager/
 ```
 
-Install wrappers:
+Or run the installer from a checked-out/staged copy:
 
 ```bash
-sudo install -o root -g root -m 0755 /opt/deploy-manager/bin/deploy-app-run /usr/local/sbin/deploy-app-run
-sudo install -o root -g root -m 0755 /opt/deploy-manager/bin/deploy-manager-sudo /usr/local/bin/deploy-manager-sudo
+sudo ./install/install-on-vps.sh "$PWD"
 ```
 
-Create the service user:
+The installer creates:
 
-```bash
-sudo useradd --system --home /nonexistent --shell /usr/sbin/nologin deploy-manager
+```text
+/opt/deploy-manager
+/etc/deploy-manager
+/etc/deploy-manager/apps
+/etc/deploy-manager/deploy-manager.env
+/usr/local/sbin/deploy-app-run
+/usr/local/bin/deploy-manager-sudo
+/etc/systemd/system/deploy-manager.service
+/etc/sudoers.d/deploy-manager
 ```
 
-Create config directories:
-
-```bash
-sudo mkdir -p /etc/deploy-manager/apps
-sudo mkdir -p /var/log/deploy-manager
-```
-
-Copy and edit the central config:
-
-```bash
-sudo cp /opt/deploy-manager/examples/apps.json /etc/deploy-manager/apps.json
-sudo cp /opt/deploy-manager/examples/deploy-manager.env.example /etc/deploy-manager/deploy-manager.env
-sudo chmod 0600 /etc/deploy-manager/deploy-manager.env
-```
-
-Copy and edit app configs:
-
-```bash
-sudo cp /opt/deploy-manager/examples/apps/aquarium.env /etc/deploy-manager/apps/aquarium.env
-sudo cp /opt/deploy-manager/examples/apps/birds.env /etc/deploy-manager/apps/birds.env
-sudo chmod 0644 /etc/deploy-manager/apps/*.env
-```
-
-Install systemd and sudoers files:
-
-```bash
-sudo cp /opt/deploy-manager/install/systemd/deploy-manager.service /etc/systemd/system/deploy-manager.service
-sudo cp /opt/deploy-manager/install/sudoers/deploy-manager /etc/sudoers.d/deploy-manager
-sudo chmod 0440 /etc/sudoers.d/deploy-manager
-sudo visudo -cf /etc/sudoers.d/deploy-manager
-```
-
-Start the service:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now deploy-manager
-sudo systemctl status deploy-manager --no-pager
-```
+Edit `/etc/deploy-manager/apps.json`, `/etc/deploy-manager/apps/*.env`, and
+`/etc/deploy-manager/deploy-manager.env` for the real domains, repos, ports,
+branches, and webhook secrets.
 
 ## App Config
 
@@ -121,11 +96,11 @@ paths exist and which GitHub repo is allowed:
 ```json
 {
   "apps": {
-    "aquarium": {
-      "repo": "your-github-user/aquarium",
-      "branch": "master",
+    "app-one": {
+      "repo": "example-org/app-one",
+      "branch": "main",
       "event": "push",
-      "secretEnv": "AQUARIUM_DEPLOY_WEBHOOK_SECRET"
+      "secretEnv": "APP_ONE_DEPLOY_WEBHOOK_SECRET"
     }
   }
 }
@@ -134,32 +109,32 @@ paths exist and which GitHub repo is allowed:
 The root-side app env file controls deployment behavior:
 
 ```bash
-APP_ID=aquarium
-REPO_DIR=/opt/aquarium/app
-REPO_USER=codex
-BRANCH=master
+APP_ID=app-one
+REPO_DIR=/opt/app-one/app
+REPO_USER=deploy
+BRANCH=main
 
-IMAGE_NAME=aquarium-app
-CONTAINER_NAME=aquarium-app
-CANDIDATE_CONTAINER_NAME=aquarium-app-candidate
+IMAGE_NAME=app-one
+CONTAINER_NAME=app-one
+CANDIDATE_CONTAINER_NAME=app-one-candidate
 
 APP_PORT=3010
 CANDIDATE_APP_PORT=3011
 CONTAINER_PORT=3000
 HEALTH_PATH=/healthz
 
-LOG_FILE=/opt/aquarium/deploy.log
+LOG_FILE=/opt/app-one/deploy.log
 ```
 
 The app ID in the URL maps to `/etc/deploy-manager/apps/<app-id>.env`. For
-example, `/deploy/aquarium` maps to `/etc/deploy-manager/apps/aquarium.env`.
+example, `/deploy/app-one` maps to `/etc/deploy-manager/apps/app-one.env`.
 
 ## App Repo Requirements
 
 Each app repo should have:
 
 - a Dockerfile
-- a stable branch, usually `master` or `main`
+- a stable deploy branch, usually `main` or `master`
 - a health endpoint, preferably `/healthz`
 - a GitHub Actions workflow based on `examples/github-actions/deploy.yml`
 
@@ -181,15 +156,8 @@ rollback to old image if production health fails
 In each app repo, configure:
 
 ```text
-DEPLOY_WEBHOOK_URL=https://deploy.alirezaafshan.com/deploy/aquarium
-DEPLOY_WEBHOOK_SECRET=<same value as AQUARIUM_DEPLOY_WEBHOOK_SECRET on the VPS>
-```
-
-For birds:
-
-```text
-DEPLOY_WEBHOOK_URL=https://deploy.alirezaafshan.com/deploy/birds
-DEPLOY_WEBHOOK_SECRET=<same value as BIRDS_DEPLOY_WEBHOOK_SECRET on the VPS>
+DEPLOY_WEBHOOK_URL=https://deploy.example.com/deploy/app-one
+DEPLOY_WEBHOOK_SECRET=<same value as APP_ONE_DEPLOY_WEBHOOK_SECRET on the VPS>
 ```
 
 ## Caddy
@@ -197,15 +165,15 @@ DEPLOY_WEBHOOK_SECRET=<same value as BIRDS_DEPLOY_WEBHOOK_SECRET on the VPS>
 Use Caddy to route public traffic to each app's local-only Docker port:
 
 ```caddyfile
-fish.alirezaafshan.com {
+app-one.example.com {
   reverse_proxy 127.0.0.1:3010
 }
 
-birds.alirezaafshan.com {
+app-two.example.com {
   reverse_proxy 127.0.0.1:3020
 }
 
-deploy.alirezaafshan.com {
+deploy.example.com {
   reverse_proxy 127.0.0.1:9000
 }
 ```
@@ -217,15 +185,15 @@ The app containers should bind only to `127.0.0.1`, not the public interface.
 Check the manager:
 
 ```bash
-curl -I http://127.0.0.1:9000/healthz
+curl http://127.0.0.1:9000/healthz
 systemctl status deploy-manager --no-pager
 ```
 
 Check deployed apps:
 
 ```bash
-curl -I https://fish.alirezaafshan.com/healthz
-curl -I https://birds.alirezaafshan.com/healthz
+curl -I https://app-one.example.com/healthz
+curl -I https://app-two.example.com/healthz
 sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
 ```
 
@@ -233,12 +201,6 @@ Check logs:
 
 ```bash
 sudo journalctl -u deploy-manager -n 100 --no-pager
-sudo tail -n 100 /opt/aquarium/deploy.log
-sudo tail -n 100 /opt/birdoftheday/deploy.log
+sudo tail -n 100 /opt/app-one/deploy.log
+sudo tail -n 100 /opt/app-two/deploy.log
 ```
-
-## Migration Recommendation
-
-Keep the existing website deploy service running while this is introduced.
-Deploy `aquarium` first, then `birds`, and migrate `website` last. See
-`docs/migration-plan.md`.

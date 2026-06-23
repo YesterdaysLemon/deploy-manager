@@ -1,22 +1,22 @@
 {
   "apps": {
-    "website": {
-      "repo": "your-github-user/website",
-      "branch": "master",
+    "portfolio": {
+      "repo": "example-org/portfolio",
+      "branch": "main",
       "event": "push",
-      "secretEnv": "WEBSITE_DEPLOY_WEBHOOK_SECRET"
+      "secretEnv": "PORTFOLIO_DEPLOY_WEBHOOK_SECRET"
     },
-    "aquarium": {
-      "repo": "your-github-user/aquarium",
-      "branch": "master",
+    "app-one": {
+      "repo": "example-org/app-one",
+      "branch": "main",
       "event": "push",
-      "secretEnv": "AQUARIUM_DEPLOY_WEBHOOK_SECRET"
+      "secretEnv": "APP_ONE_DEPLOY_WEBHOOK_SECRET"
     },
-    "birds": {
-      "repo": "your-github-user/birdoftheday",
-      "branch": "master",
+    "app-two": {
+      "repo": "example-org/app-two",
+      "branch": "main",
       "event": "push",
-      "secretEnv": "BIRDS_DEPLOY_WEBHOOK_SECRET"
+      "secretEnv": "APP_TWO_DEPLOY_WEBHOOK_SECRET"
     }
   }
 }
