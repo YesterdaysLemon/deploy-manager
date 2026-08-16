@@ -1,0 +1,16 @@
+[Unit]
+Description=Central deploy manager webhook (versioned release)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=deploy-manager
+EnvironmentFile=/etc/deploy-manager/deploy-manager.env
+WorkingDirectory=/opt/deploy-manager-current
+ExecStart=/usr/bin/node /opt/deploy-manager-current/src/server.mjs
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

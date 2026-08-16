@@ -34,6 +34,8 @@ chmod -R go-w "$INSTALL_DIR"
 
 install -o root -g root -m 0755 "$INSTALL_DIR/bin/deploy-app-run" /usr/local/sbin/deploy-app-run
 install -o root -g root -m 0755 "$INSTALL_DIR/bin/deploy-manager-sudo" /usr/local/bin/deploy-manager-sudo
+install -d -o root -g root -m 0755 /usr/local/libexec/deploy-manager
+install -o root -g root -m 0755 "$INSTALL_DIR/bin/deploy-app.sh" /usr/local/libexec/deploy-manager/deploy-app.sh
 
 if ! id deploy-manager >/dev/null 2>&1; then
   useradd --system --home /nonexistent --shell /usr/sbin/nologin deploy-manager
