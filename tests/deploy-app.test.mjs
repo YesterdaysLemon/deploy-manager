@@ -101,7 +101,7 @@ case "$command" in
 esac
 return 0
 }
-. "$DEPLOY_SCRIPT" "$SHA"
+. "$DEPLOY_SCRIPT"
 `,
     );
 
@@ -131,6 +131,7 @@ return 0
       encoding: "utf8",
       env: {
         ...process.env,
+        DEPLOY_SHA: sha,
         ENV_FILE: posix(envFile),
         DEPLOY_SCRIPT: posix(DEPLOY_SCRIPT),
         DOCKER_LOG: posix(dockerLog),
