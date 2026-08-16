@@ -4,7 +4,7 @@ set -eu
 APP_ID="${1:-}"
 REQUESTED_SHA="${2:-}"
 ENV_ROOT="${DEPLOY_MANAGER_APP_ENV_ROOT:-/etc/deploy-manager/apps}"
-DEPLOY_MANAGER_HOME="${DEPLOY_MANAGER_HOME:-/opt/deploy-manager}"
+DEPLOY_APP_SCRIPT="${DEPLOY_MANAGER_DEPLOY_SCRIPT:-/usr/local/libexec/deploy-manager/deploy-app.sh}"
 
 case "$APP_ID" in
   ""|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*)
@@ -32,5 +32,10 @@ if [ ! -r "$ENV_FILE" ]; then
   exit 66
 fi
 
+if [ ! -x "$DEPLOY_APP_SCRIPT" ]; then
+  echo "deploy-app-run: privileged deploy script is missing: $DEPLOY_APP_SCRIPT" >&2
+  exit 66
+fi
+
 export ENV_FILE
-exec "${DEPLOY_MANAGER_HOME}/bin/deploy-app.sh" "$REQUESTED_SHA"
+exec "$DEPLOY_APP_SCRIPT" "$REQUESTED_SHA"

@@ -6,7 +6,7 @@
   "description": "Central webhook and Docker rollout manager for small VPS-hosted webapps.",
   "scripts": {
     "start": "node src/server.mjs",
-    "test": "node --test tests/deploy-app.test.mjs",
+    "test": "node --test tests/deploy-app.test.mjs tests/self-update.test.mjs",
     "check": "node --check src/server.mjs && npm test"
   },
   "engines": {

@@ -16,6 +16,12 @@ Each app keeps its own Git repo and Dockerfile. This repo provides the central
 signed webhook, the shared Docker rollout script, systemd/sudo examples, Caddy
 examples, and a GitHub Actions workflow template.
 
+The manager itself can optionally follow an exact, green `main` SHA through a
+separate root-owned updater. Releases are versioned and activated atomically;
+the updater rolls back on failed restart or health validation. Root deployment
+scripts and sudo/systemd policy remain manual. See
+[`docs/self-update.md`](docs/self-update.md).
+
 ## Architecture
 
 ```text
@@ -53,6 +59,12 @@ loopback-only manager port.
 - `install/install-on-vps.sh`: simple installer for a fresh VPS setup.
 - `install/systemd/deploy-manager.service`: systemd unit example.
 - `install/sudoers/deploy-manager`: narrow sudoers example.
+- `install/bootstrap-self-update.sh`: one-time migration to versioned releases.
+- `install/update-deploy-manager`: root-owned exact-SHA release updater.
+- `install/systemd/deploy-manager-managed.service`: service using the atomic
+  active-release link.
+- `install/systemd/deploy-manager-update.*`: periodic update check and timer.
+- `docs/self-update.md`: trust boundary, bootstrap, rollback, and operations.
 
 ## VPS Configuration
 
@@ -85,6 +97,11 @@ The installer creates:
 Edit `/etc/deploy-manager/apps.json`, `/etc/deploy-manager/apps/*.env`, and
 `/etc/deploy-manager/deploy-manager.env` for the real domains, repos, ports,
 branches, and webhook secrets.
+
+For an existing production installation, do not overlay this repository onto
+the live directory merely to enable self-update. Follow the migration in
+[`docs/self-update.md`](docs/self-update.md); it preserves the site-specific
+configuration and legacy flat install while creating a root-only backup.
 
 ## App Config
 

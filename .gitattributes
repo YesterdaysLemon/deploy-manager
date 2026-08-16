@@ -2,3 +2,4 @@
 bin/* text eol=lf
 install/systemd/* text eol=lf
 install/sudoers/* text eol=lf
+install/update-deploy-manager text eol=lf

@@ -1,0 +1,12 @@
+[Unit]
+Description=Check for a green Deploy Manager main release
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=2min
+Persistent=true
+Unit=deploy-manager-update.service
+
+[Install]
+WantedBy=timers.target
