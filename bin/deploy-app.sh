@@ -45,7 +45,8 @@ LOCK_FILE="${LOCK_FILE:-/var/lock/deploy-manager-${APP_ID}.lock}"
 DOCKER_BUILD_CONTEXT="${DOCKER_BUILD_CONTEXT:-.}"
 DOCKERFILE="${DOCKERFILE:-}"
 STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
-NEW_IMAGE="${IMAGE_NAME}:$(date -u +%Y%m%d%H%M%S)"
+NEW_IMAGE="${IMAGE_NAME}:${REQUESTED_SHA}"
+HEALTH_URL="http://127.0.0.1:${APP_PORT}${HEALTH_PATH}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
 mkdir -p "$(dirname "$LOCK_FILE")"
@@ -139,6 +140,27 @@ run_container() {
     "$image"
 }
 
+restore_old_image() {
+  failure_reason="$1"
+
+  # A failed `docker run` can still leave a stopped container with the production name.
+  # Clear it before restoring the last known-good image.
+  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+
+  if [ -z "${OLD_IMAGE:-}" ]; then
+    fail "$failure_reason sha=$CURRENT_SHA no_previous_image"
+  fi
+
+  run_container "$CONTAINER_NAME" "$APP_PORT" "yes" "$OLD_IMAGE" >/dev/null ||
+    fail "${failure_reason}_rollback_run_failed sha=$CURRENT_SHA old_image=$OLD_IMAGE"
+
+  if health_check "$HEALTH_URL"; then
+    fail "${failure_reason}_rolled_back sha=$CURRENT_SHA old_image=$OLD_IMAGE"
+  fi
+
+  fail "${failure_reason}_rollback_health_check_failed sha=$CURRENT_SHA url=$HEALTH_URL old_image=$OLD_IMAGE"
+}
+
 log "deploy_start branch=$BRANCH requested_sha=$REQUESTED_SHA started_at=$STARTED_AT"
 
 cd "$REPO_DIR" || fail "repo_dir_not_found"
@@ -183,30 +205,22 @@ docker rm -f "$CANDIDATE_CONTAINER_NAME" >/dev/null 2>&1 || fail "candidate_rm_f
 
 if [ -n "$OLD_CONTAINER_ID" ]; then
   docker stop "$CONTAINER_NAME" || fail "docker_stop_failed sha=$CURRENT_SHA"
-  docker rm "$CONTAINER_NAME" || fail "docker_rm_failed sha=$CURRENT_SHA"
+  if ! docker rm "$CONTAINER_NAME"; then
+    if docker start "$CONTAINER_NAME" >/dev/null 2>&1 && health_check "$HEALTH_URL"; then
+      fail "docker_rm_failed_old_restarted sha=$CURRENT_SHA old_image=$OLD_IMAGE"
+    fi
+
+    fail "docker_rm_failed_old_restore_failed sha=$CURRENT_SHA old_image=$OLD_IMAGE"
+  fi
 fi
 
-run_container "$CONTAINER_NAME" "$APP_PORT" "yes" "$NEW_IMAGE" >/dev/null ||
-  fail "docker_run_failed sha=$CURRENT_SHA"
-
-HEALTH_URL="http://127.0.0.1:${APP_PORT}${HEALTH_PATH}"
+if ! run_container "$CONTAINER_NAME" "$APP_PORT" "yes" "$NEW_IMAGE" >/dev/null; then
+  restore_old_image "docker_run_failed"
+fi
 
 if ! health_check "$HEALTH_URL"; then
   docker logs "$CONTAINER_NAME" 2>&1 | tail -n 80 | tee -a "$LOG_FILE" || true
-  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
-
-  if [ -n "$OLD_IMAGE" ]; then
-    run_container "$CONTAINER_NAME" "$APP_PORT" "yes" "$OLD_IMAGE" >/dev/null ||
-      fail "rollback_run_failed sha=$CURRENT_SHA old_image=$OLD_IMAGE"
-
-    if health_check "$HEALTH_URL"; then
-      fail "health_check_failed_rolled_back sha=$CURRENT_SHA url=$HEALTH_URL old_image=$OLD_IMAGE"
-    fi
-
-    fail "rollback_health_check_failed sha=$CURRENT_SHA url=$HEALTH_URL old_image=$OLD_IMAGE"
-  fi
-
-  fail "health_check_failed sha=$CURRENT_SHA url=$HEALTH_URL"
+  restore_old_image "health_check_failed"
 fi
 
 ENDED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"

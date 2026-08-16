@@ -148,8 +148,11 @@ docker run candidate on 127.0.0.1:<candidate-port>
 curl candidate health URL
 replace production container
 curl production health URL
-rollback to old image if production health fails
+rollback to old image if production start or health fails
 ```
+
+Built images are tagged with the exact requested Git SHA, so the running container and
+rollback target retain source provenance after the deployment log rotates.
 
 ## GitHub Actions Secrets
 
