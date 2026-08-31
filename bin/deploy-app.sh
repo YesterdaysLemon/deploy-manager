@@ -106,9 +106,21 @@ run_container() {
   restart_policy="$3"
   image="$4"
 
+  # Optional: attach the container to a user-defined docker network so it
+  # can reach sidecars (a database, say) by container name. Unset for every
+  # app that does not need one, in which case this expands to nothing and
+  # the behaviour below is exactly what it was before.
+  #
+  # Deliberately unquoted at the call sites: it must split into two words.
+  # Docker network names cannot contain whitespace, so that is safe.
+  NETWORK_ARG=""
+  if [ -n "${DOCKER_NETWORK:-}" ]; then
+    NETWORK_ARG="--network ${DOCKER_NETWORK}"
+  fi
+
   if [ -n "${CONTAINER_ENV_FILE:-}" ]; then
     if [ "$restart_policy" = "yes" ]; then
-      docker run -d \
+      docker run -d $NETWORK_ARG \
         --name "$container_name" \
         --restart unless-stopped \
         --env-file "$CONTAINER_ENV_FILE" \
@@ -117,7 +129,7 @@ run_container() {
       return
     fi
 
-    docker run -d \
+    docker run -d $NETWORK_ARG \
       --name "$container_name" \
       --env-file "$CONTAINER_ENV_FILE" \
       -p "127.0.0.1:${host_port}:${CONTAINER_PORT}" \
@@ -126,7 +138,7 @@ run_container() {
   fi
 
   if [ "$restart_policy" = "yes" ]; then
-    docker run -d \
+    docker run -d $NETWORK_ARG \
       --name "$container_name" \
       --restart unless-stopped \
       -p "127.0.0.1:${host_port}:${CONTAINER_PORT}" \
@@ -134,7 +146,7 @@ run_container() {
     return
   fi
 
-  docker run -d \
+  docker run -d $NETWORK_ARG \
     --name "$container_name" \
     -p "127.0.0.1:${host_port}:${CONTAINER_PORT}" \
     "$image"
