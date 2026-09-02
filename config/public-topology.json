@@ -1,0 +1,131 @@
+{
+  "auditedAt": "2026-09-02T17:34:49+01:00",
+  "host": {
+    "name": "Alireza's VPS",
+    "platform": "Ubuntu + Docker",
+    "edge": "Caddy",
+    "manager": "Deploy Manager",
+    "release": "07bae6f",
+    "status": "online"
+  },
+  "routes": [
+    {
+      "id": "galaxy-menu",
+      "appId": "galaxy-menu",
+      "name": "Galaxy Menu",
+      "hostname": "alirezaafshan.com",
+      "port": 3070,
+      "kind": "observatory",
+      "description": "The front door: a navigable index of the worlds on this server.",
+      "healthPath": "/"
+    },
+    {
+      "id": "portfolio",
+      "appId": "website",
+      "name": "Portfolio",
+      "hostname": "portfolio.alirezaafshan.com",
+      "port": 3000,
+      "kind": "tower",
+      "description": "The long-running portfolio site, promoted through the shared rollout lane.",
+      "healthPath": "/healthz"
+    },
+    {
+      "id": "aquarium",
+      "appId": "aquarium",
+      "name": "Aquarium",
+      "hostname": "fish.alirezaafshan.com",
+      "port": 3010,
+      "kind": "aquarium",
+      "description": "A glassy, static-first aquarium served from its own container.",
+      "healthPath": "/"
+    },
+    {
+      "id": "birds",
+      "appId": "birds",
+      "name": "Bird of the Day",
+      "hostname": "birds.alirezaafshan.com",
+      "port": 3020,
+      "kind": "aviary",
+      "description": "A daily bird exhibit with a small API-backed application server.",
+      "healthPath": "/api/health"
+    },
+    {
+      "id": "celegans",
+      "appId": "celegans",
+      "name": "C. elegans",
+      "hostname": "worm.alirezaafshan.com",
+      "port": 3030,
+      "kind": "lab",
+      "description": "A browser-run organism simulation with a versioned model and WASM runtime.",
+      "healthPath": "/build.json"
+    },
+    {
+      "id": "continuity",
+      "name": "Codex Continuity",
+      "hostname": "continuity.alirezaafshan.com",
+      "port": 3040,
+      "kind": "bridge",
+      "description": "A release and continuity bridge with its own dedicated webhook inlet.",
+      "healthPath": "/healthz",
+      "managedBy": "continuity-deploy-manager"
+    },
+    {
+      "id": "conspiracy",
+      "appId": "conspiracy",
+      "name": "Loose Thread",
+      "hostname": "conspiracy.alirezaafshan.com",
+      "port": 3050,
+      "kind": "archive",
+      "description": "An evidence-mapping workspace in its own health-checked container.",
+      "healthPath": "/healthz"
+    },
+    {
+      "id": "androidhell",
+      "appId": "androidhell",
+      "name": "Android Hell",
+      "hostname": "androidhell.alirezaafshan.com",
+      "port": 3060,
+      "kind": "factory",
+      "description": "A stateful application whose web container can be swapped without replacing its database.",
+      "healthPath": "/healthz",
+      "datastores": ["androidhell-postgres"]
+    }
+  ],
+  "datastores": [
+    {
+      "id": "androidhell-postgres",
+      "name": "PostgreSQL 17",
+      "kind": "postgres",
+      "status": "online",
+      "scope": "private Docker network",
+      "connectedTo": ["androidhell"],
+      "description": "A persistent sidecar database. Deploy Manager swaps the Android Hell app container while this data service stays put."
+    }
+  ],
+  "controlPlane": [
+    {
+      "id": "caddy",
+      "name": "Caddy edge",
+      "status": "online",
+      "description": "Terminates public HTTPS and routes each hostname to a loopback-only service."
+    },
+    {
+      "id": "deploy-manager",
+      "name": "Deploy Manager",
+      "status": "online",
+      "description": "Receives signed requests and coordinates exact-SHA candidate rollouts."
+    },
+    {
+      "id": "docker",
+      "name": "Docker engine",
+      "status": "online",
+      "description": "Runs the current and candidate containers on isolated local ports."
+    },
+    {
+      "id": "continuity-deploy-manager",
+      "name": "Continuity inlet",
+      "status": "online",
+      "description": "A separate deploy webhook dedicated to Codex Continuity."
+    }
+  ]
+}

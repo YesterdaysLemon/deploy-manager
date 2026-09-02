@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { createServer } from "node:http";
+import { fileURLToPath } from "node:url";
 
 const {
   DEPLOY_MANAGER_APPS_FILE = "/etc/deploy-manager/apps.json",
@@ -15,6 +16,79 @@ const {
 const appIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
 const shaPattern = /^[0-9a-f]{40}$/i;
 const deployingApps = new Set();
+const securityHeaders = {
+  "Content-Security-Policy": [
+    "default-src 'self'",
+    "base-uri 'none'",
+    "connect-src 'self'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+    "img-src 'self' data:",
+    "object-src 'none'",
+    "script-src 'self'",
+    "style-src 'self'",
+  ].join("; "),
+  "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
+  "Referrer-Policy": "no-referrer",
+  "X-Content-Type-Options": "nosniff",
+  "X-Frame-Options": "DENY",
+};
+
+const staticAssets = new Map([
+  [
+    "/",
+    {
+      body: readFileSync(new URL("../public/index.html", import.meta.url)),
+      contentType: "text/html; charset=utf-8",
+      cacheControl: "no-cache",
+    },
+  ],
+  [
+    "/styles.css",
+    {
+      body: readFileSync(new URL("../public/styles.css", import.meta.url)),
+      contentType: "text/css; charset=utf-8",
+      cacheControl: "public, max-age=300",
+    },
+  ],
+  [
+    "/app.js",
+    {
+      body: readFileSync(new URL("../public/app.js", import.meta.url)),
+      contentType: "text/javascript; charset=utf-8",
+      cacheControl: "public, max-age=300",
+    },
+  ],
+  [
+    "/og.png",
+    {
+      body: readFileSync(new URL("../public/og.png", import.meta.url)),
+      contentType: "image/png",
+      cacheControl: "public, max-age=86400",
+    },
+  ],
+]);
+
+function loadPublicCity() {
+  const source = process.env.DEPLOY_MANAGER_PUBLIC_TOPOLOGY_FILE
+    ? process.env.DEPLOY_MANAGER_PUBLIC_TOPOLOGY_FILE
+    : new URL("../config/public-topology.json", import.meta.url);
+  const city = JSON.parse(readFileSync(source, "utf8"));
+
+  if (
+    !city ||
+    typeof city !== "object" ||
+    !city.host ||
+    !Array.isArray(city.routes) ||
+    !Array.isArray(city.datastores)
+  ) {
+    throw new Error("public topology must contain host, routes, and datastores");
+  }
+
+  return city;
+}
+
+const publicCity = loadPublicCity();
 
 function loadAppsConfig() {
   const config = JSON.parse(readFileSync(DEPLOY_MANAGER_APPS_FILE, "utf8"));
@@ -56,9 +130,174 @@ function getSecret(app) {
   return "";
 }
 
-function send(response, statusCode, body) {
-  response.writeHead(statusCode, { "Content-Type": "application/json" });
-  response.end(JSON.stringify(body));
+function sendJson(request, response, statusCode, body, cacheControl = "no-store") {
+  const payload = Buffer.from(`${JSON.stringify(body)}\n`);
+  response.writeHead(statusCode, {
+    ...securityHeaders,
+    "Cache-Control": cacheControl,
+    "Content-Length": payload.length,
+    "Content-Type": "application/json; charset=utf-8",
+  });
+  response.end(request.method === "HEAD" ? undefined : payload);
+}
+
+function sendAsset(request, response, asset) {
+  response.writeHead(200, {
+    ...securityHeaders,
+    "Cache-Control": asset.cacheControl,
+    "Content-Length": asset.body.length,
+    "Content-Type": asset.contentType,
+  });
+  response.end(request.method === "HEAD" ? undefined : asset.body);
+}
+
+function cleanPublicText(value, fallback, maxLength = 100) {
+  if (typeof value !== "string") return fallback;
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  return cleaned ? cleaned.slice(0, maxLength) : fallback;
+}
+
+function cleanPublicUrl(value) {
+  if (typeof value !== "string") return null;
+
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function cleanPublicId(value, fallback) {
+  return typeof value === "string" && appIdPattern.test(value)
+    ? value
+    : fallback;
+}
+
+function cleanPublicPort(value) {
+  const port = Number(value);
+  return Number.isInteger(port) && port > 0 && port <= 65535 ? port : null;
+}
+
+function cleanPublicList(value) {
+  return Array.isArray(value)
+    ? value
+        .map((item) => cleanPublicId(item, null))
+        .filter(Boolean)
+        .slice(0, 32)
+    : [];
+}
+
+function currentReleaseId() {
+  const configured = process.env.DEPLOY_MANAGER_RELEASE_SHA;
+  if (typeof configured === "string" && /^[0-9a-f]{7,40}$/i.test(configured)) {
+    return configured.slice(0, 7).toLowerCase();
+  }
+
+  try {
+    const sourcePath = realpathSync(fileURLToPath(import.meta.url));
+    const releaseMatch = sourcePath.match(/[\\/]([0-9a-f]{40})[\\/]src[\\/]server\.mjs$/i);
+    if (releaseMatch) return releaseMatch[1].slice(0, 7).toLowerCase();
+  } catch {
+    // Fall back to the audited public topology when no release path is available.
+  }
+
+  return cleanPublicText(publicCity.host.release, "unknown", 40);
+}
+
+function publicCitySnapshot() {
+  return {
+    auditedAt: cleanPublicText(publicCity.auditedAt, "unknown", 64),
+    host: {
+      name: cleanPublicText(publicCity.host.name, "VPS"),
+      platform: cleanPublicText(publicCity.host.platform, "Linux + Docker"),
+      edge: cleanPublicText(publicCity.host.edge, "Caddy"),
+      manager: cleanPublicText(publicCity.host.manager, "Deploy Manager"),
+      release: currentReleaseId(),
+      status: cleanPublicText(publicCity.host.status, "unknown", 24),
+    },
+    routes: publicCity.routes.slice(0, 64).map((route, index) => ({
+      id: cleanPublicId(route.id, `route-${index + 1}`),
+      appId: cleanPublicId(route.appId, undefined),
+      name: cleanPublicText(route.name, `Route ${index + 1}`),
+      hostname: cleanPublicText(route.hostname, "unpublished", 180),
+      port: cleanPublicPort(route.port),
+      kind: cleanPublicText(route.kind, "site", 32),
+      description: cleanPublicText(route.description, "Health-checked website.", 240),
+      healthPath: cleanPublicText(route.healthPath, "/", 120),
+      managedBy: cleanPublicId(route.managedBy, undefined),
+      datastores: cleanPublicList(route.datastores),
+      status: route.appId && deployingApps.has(route.appId) ? "deploying" : "steady",
+    })),
+    datastores: publicCity.datastores.slice(0, 32).map((store, index) => ({
+      id: cleanPublicId(store.id, `datastore-${index + 1}`),
+      name: cleanPublicText(store.name, `Datastore ${index + 1}`),
+      kind: cleanPublicText(store.kind, "datastore", 32),
+      status: cleanPublicText(store.status, "unknown", 24),
+      scope: cleanPublicText(store.scope, "private", 120),
+      connectedTo: cleanPublicList(store.connectedTo),
+      description: cleanPublicText(store.description, "Private application data service.", 240),
+    })),
+    controlPlane: Array.isArray(publicCity.controlPlane)
+      ? publicCity.controlPlane.slice(0, 32).map((service, index) => ({
+          id: cleanPublicId(service.id, `service-${index + 1}`),
+          name: cleanPublicText(service.name, `Service ${index + 1}`),
+          status: cleanPublicText(service.status, "unknown", 24),
+          description: cleanPublicText(service.description, "Control-plane service.", 240),
+        }))
+      : [],
+  };
+}
+
+function publicTopology() {
+  const publicApps = Object.entries(apps)
+    .filter(([, app]) => app.public !== false)
+    .map(([appId, app]) => ({
+      id: appId,
+      name: cleanPublicText(app.publicName, appId.replaceAll(/[-_]/g, " ")),
+      description: cleanPublicText(
+        app.publicDescription,
+        "Signed, health-checked deployment target.",
+        180,
+      ),
+      branch: cleanPublicText(app.branch, "master", 64),
+      event: cleanPublicText(app.event, "push", 32),
+      url: cleanPublicUrl(app.publicUrl),
+      status: deployingApps.has(appId) ? "deploying" : "ready",
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+
+  return {
+    service: {
+      name: "deploy-manager",
+      repository: cleanPublicText(
+        process.env.DEPLOY_MANAGER_PUBLIC_REPOSITORY,
+        "YesterdaysLemon / deploy-manager",
+      ),
+      branch: cleanPublicText(
+        process.env.DEPLOY_MANAGER_PUBLIC_BRANCH,
+        "main",
+        64,
+      ),
+      engine: `node ${process.versions.node.split(".")[0]}`,
+      release: currentReleaseId(),
+      status: "online",
+    },
+    apps: publicApps,
+    activeDeployments: publicApps.filter((app) => app.status === "deploying").length,
+    liveDeployments: publicApps
+      .filter((app) => app.status === "deploying")
+      .map((app) => app.id),
+    city: publicCitySnapshot(),
+    safeguards: [
+      "signed webhook",
+      "exact SHA",
+      "green CI",
+      "candidate health",
+      "automatic rollback",
+    ],
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 function verifySignature(rawBody, signatureHeader, secret) {
@@ -156,15 +395,34 @@ const apps = loadAppsConfig();
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", "http://localhost");
 
-  if (request.method === "GET" && url.pathname === "/healthz") {
-    send(response, 200, { ok: true });
+  if (
+    (request.method === "GET" || request.method === "HEAD") &&
+    staticAssets.has(url.pathname)
+  ) {
+    sendAsset(request, response, staticAssets.get(url.pathname));
+    return;
+  }
+
+  if (
+    (request.method === "GET" || request.method === "HEAD") &&
+    url.pathname === "/healthz"
+  ) {
+    sendJson(request, response, 200, { ok: true });
+    return;
+  }
+
+  if (
+    (request.method === "GET" || request.method === "HEAD") &&
+    url.pathname === "/api/topology"
+  ) {
+    sendJson(request, response, 200, publicTopology());
     return;
   }
 
   const match = /^\/deploy\/([a-z0-9_-]+)$/i.exec(url.pathname);
 
   if (request.method !== "POST" || !match) {
-    send(response, 404, { ok: false, error: "not_found" });
+    sendJson(request, response, 404, { ok: false, error: "not_found" });
     return;
   }
 
@@ -172,7 +430,7 @@ const server = createServer(async (request, response) => {
   const app = apps[appId];
 
   if (!app) {
-    send(response, 404, { ok: false, error: "unknown_app" });
+    sendJson(request, response, 404, { ok: false, error: "unknown_app" });
     return;
   }
 
@@ -180,10 +438,15 @@ const server = createServer(async (request, response) => {
   try {
     rawBody = await readRequestBody(request);
   } catch (error) {
-    send(response, error.message === "request_too_large" ? 413 : 400, {
-      ok: false,
-      error: error.message,
-    });
+    sendJson(
+      request,
+      response,
+      error.message === "request_too_large" ? 413 : 400,
+      {
+        ok: false,
+        error: error.message,
+      },
+    );
     return;
   }
 
@@ -194,7 +457,7 @@ const server = createServer(async (request, response) => {
       getSecret(app),
     )
   ) {
-    send(response, 401, { ok: false, error: "bad_signature" });
+    sendJson(request, response, 401, { ok: false, error: "bad_signature" });
     return;
   }
 
@@ -202,29 +465,40 @@ const server = createServer(async (request, response) => {
   try {
     payload = JSON.parse(rawBody.toString("utf8"));
   } catch {
-    send(response, 400, { ok: false, error: "bad_json" });
+    sendJson(request, response, 400, { ok: false, error: "bad_json" });
     return;
   }
 
   if (request.headers["x-github-event"] !== (app.event ?? "push")) {
-    send(response, 202, { ok: true, skipped: true, reason: "wrong_event" });
+    sendJson(request, response, 202, {
+      ok: true,
+      skipped: true,
+      reason: "wrong_event",
+    });
     return;
   }
 
   const payloadError = validatePayload(payload, app);
 
   if (payloadError === "skipped") {
-    send(response, 202, { ok: true, skipped: true, reason: "wrong_ref" });
+    sendJson(request, response, 202, {
+      ok: true,
+      skipped: true,
+      reason: "wrong_ref",
+    });
     return;
   }
 
   if (payloadError) {
-    send(response, 400, { ok: false, error: payloadError });
+    sendJson(request, response, 400, { ok: false, error: payloadError });
     return;
   }
 
   if (deployingApps.has(appId)) {
-    send(response, 409, { ok: false, error: "deploy_in_progress" });
+    sendJson(request, response, 409, {
+      ok: false,
+      error: "deploy_in_progress",
+    });
     return;
   }
 
@@ -232,9 +506,13 @@ const server = createServer(async (request, response) => {
 
   try {
     await runDeploy(appId, payload, app);
-    send(response, 200, { ok: true, app: appId, sha: payload.sha });
+    sendJson(request, response, 200, {
+      ok: true,
+      app: appId,
+      sha: payload.sha,
+    });
   } catch (error) {
-    send(response, 500, {
+    sendJson(request, response, 500, {
       ok: false,
       app: appId,
       error: error instanceof Error ? error.message : "deploy_failed",
