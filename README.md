@@ -45,9 +45,60 @@ The public app traffic should go through a reverse proxy such as Caddy to
 local-only Docker ports. The deploy webhook should also be proxied to a
 loopback-only manager port.
 
+## Public Homepage and Route Boundaries
+
+The deploy hostname is both the public explanation of the system and the
+machine-facing webhook inlet. HTTP method and exact path keep those surfaces
+separate:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET`, `HEAD` | `/` | interactive VPS and rollout visualizer |
+| `GET`, `HEAD` | `/api/topology` | display-safe manager and fleet state |
+| `GET`, `HEAD` | `/healthz` | service health probe |
+| `GET`, `HEAD` | `/styles.css`, `/app.js`, `/og.png` | public assets |
+| `POST` | `/deploy/<app-id>` | signed deployment request |
+
+A browser request to `/` never enters deployment handling. Conversely, a
+`GET` to `/deploy/<app-id>` is a JSON `404`; deployment requires an exact
+`POST` route and a valid signature. Unknown paths and wrong methods fail
+closed.
+
+Caddy can proxy the whole hostname to the manager without rewriting paths:
+
+```caddyfile
+deploy.example.com {
+  reverse_proxy 127.0.0.1:9000
+}
+```
+
+If one exact deployment path has a dedicated inlet, match it before the
+shared-manager fallback and preserve the original request path:
+
+```caddyfile
+deploy.example.com {
+  handle /deploy/special-app {
+    reverse_proxy 127.0.0.1:9020
+  }
+
+  handle {
+    reverse_proxy 127.0.0.1:9000
+  }
+}
+```
+
+The public map comes from `config/public-topology.json` by default. An
+operator-maintained file can be selected with
+`DEPLOY_MANAGER_PUBLIC_TOPOLOGY_FILE`. Only allowlisted display fields are
+returned; extra keys are discarded. `DEPLOY_MANAGER_RELEASE_SHA` may be set
+explicitly, otherwise SHA-named VPS releases are detected from the active
+release path.
+
 ## Files
 
 - `src/server.mjs`: central signed webhook server.
+- `public/`: visualizer, interaction code, styles, and social preview.
+- `config/public-topology.json`: public-safe VPS inventory displayed by the map.
 - `bin/deploy-app.sh`: generic Docker deployment script.
 - `bin/deploy-app-run`: root-side wrapper that maps app IDs to env files.
 - `bin/deploy-manager-sudo`: unprivileged wrapper used by the webhook process.
