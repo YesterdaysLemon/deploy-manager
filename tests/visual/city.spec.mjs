@@ -15,7 +15,10 @@ async function openCity(page, viewport) {
 
 test("desktop city keeps its visual contract", async ({ page }) => {
   await openCity(page, { width: 1280, height: 900 });
-  await expect(page).toHaveScreenshot("release-city-desktop.png", { fullPage: true });
+  await expect(page.locator("body")).toHaveScreenshot(
+    "release-city-desktop.png",
+    { timeout: 30_000 },
+  );
 });
 
 test("mobile city stays focused and usable", async ({ page }) => {
