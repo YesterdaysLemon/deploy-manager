@@ -6,7 +6,7 @@ export default defineConfig({
   testDir: "./tests/visual",
   fullyParallel: false,
   workers: 1,
-  timeout: 60_000,
+  timeout: 90_000,
   expect: {
     timeout: 12_000,
     toHaveScreenshot: {

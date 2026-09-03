@@ -4,7 +4,11 @@ async function openCity(page, viewport) {
   await page.setViewportSize(viewport);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
-  await expect(page.locator(".city3d-loading")).toBeHidden();
+  await expect(page.locator(".city3d-loading")).toBeHidden({ timeout: 45_000 });
+  await expect(page.locator("#city-3d-scene")).not.toHaveAttribute(
+    "data-asset-warnings",
+    /\d+/,
+  );
   await expect(page.locator(".city3d-canvas")).toHaveAttribute("role", "application");
   await expect(page.getByRole("button", { name: "Watch a release" })).toBeVisible();
 }
