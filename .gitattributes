@@ -3,3 +3,10 @@ bin/* text eol=lf
 install/systemd/* text eol=lf
 install/sudoers/* text eol=lf
 install/update-deploy-manager text eol=lf
+
+*.glb binary
+*.png binary
+
+# These files preserve upstream or generated whitespace verbatim.
+public/assets/kenney/**/LICENSE.txt -whitespace
+public/city3d.bundle.js -whitespace

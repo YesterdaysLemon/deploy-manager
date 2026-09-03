@@ -7,6 +7,7 @@ CONFIG_DIR="${CONFIG_DIR:-/etc/deploy-manager}"
 APP_CONFIG_DIR="${APP_CONFIG_DIR:-${CONFIG_DIR}/apps}"
 RUNTIME_ENV_DIR="${RUNTIME_ENV_DIR:-${CONFIG_DIR}/runtime-env}"
 LOG_DIR="${LOG_DIR:-/var/log/deploy-manager}"
+STATE_DIR="${STATE_DIR:-/var/lib/deploy-manager}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "install-on-vps: run with sudo" >&2
@@ -45,6 +46,7 @@ install -d -o root -g root -m 0755 "$CONFIG_DIR"
 install -d -o root -g root -m 0755 "$APP_CONFIG_DIR"
 install -d -o root -g root -m 0750 "$RUNTIME_ENV_DIR"
 install -d -o root -g root -m 0755 "$LOG_DIR"
+install -d -o deploy-manager -g deploy-manager -m 0750 "$STATE_DIR"
 
 if [ ! -f "$CONFIG_DIR/apps.json" ]; then
   install -o root -g root -m 0644 "$INSTALL_DIR/examples/apps.json" "$CONFIG_DIR/apps.json"
@@ -58,6 +60,7 @@ if [ ! -f "$CONFIG_DIR/deploy-manager.env" ]; then
     echo "DEPLOY_MANAGER_PORT=9000"
     echo "DEPLOY_MANAGER_SCRIPT=/usr/local/bin/deploy-manager-sudo"
     echo "DEPLOY_MANAGER_MAX_BYTES=65536"
+    echo "DEPLOY_MANAGER_STATE_DIR=$STATE_DIR"
     echo
     echo "PORTFOLIO_DEPLOY_WEBHOOK_SECRET=$(random_secret)"
     echo "APP_ONE_DEPLOY_WEBHOOK_SECRET=$(random_secret)"

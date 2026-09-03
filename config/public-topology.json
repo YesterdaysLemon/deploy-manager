@@ -15,6 +15,7 @@
       "name": "Galaxy Menu",
       "hostname": "alirezaafshan.com",
       "port": 3070,
+      "plot": { "x": -1.5, "z": -1.5 },
       "kind": "observatory",
       "description": "The front door: a navigable index of the worlds on this server.",
       "healthPath": "/"
@@ -25,6 +26,7 @@
       "name": "Portfolio",
       "hostname": "portfolio.alirezaafshan.com",
       "port": 3000,
+      "plot": { "x": -0.5, "z": -1.5 },
       "kind": "tower",
       "description": "The long-running portfolio site, promoted through the shared rollout lane.",
       "healthPath": "/healthz"
@@ -35,6 +37,7 @@
       "name": "Aquarium",
       "hostname": "fish.alirezaafshan.com",
       "port": 3010,
+      "plot": { "x": 0.5, "z": -1.5 },
       "kind": "aquarium",
       "description": "A glassy, static-first aquarium served from its own container.",
       "healthPath": "/"
@@ -45,6 +48,7 @@
       "name": "Bird of the Day",
       "hostname": "birds.alirezaafshan.com",
       "port": 3020,
+      "plot": { "x": 1.5, "z": -1.5 },
       "kind": "aviary",
       "description": "A daily bird exhibit with a small API-backed application server.",
       "healthPath": "/api/health"
@@ -55,6 +59,7 @@
       "name": "C. elegans",
       "hostname": "worm.alirezaafshan.com",
       "port": 3030,
+      "plot": { "x": -1.5, "z": -0.5 },
       "kind": "lab",
       "description": "A browser-run organism simulation with a versioned model and WASM runtime.",
       "healthPath": "/build.json"
@@ -64,6 +69,7 @@
       "name": "Codex Continuity",
       "hostname": "continuity.alirezaafshan.com",
       "port": 3040,
+      "plot": { "x": 1.5, "z": -0.5 },
       "kind": "bridge",
       "description": "A release and continuity bridge with its own dedicated webhook inlet.",
       "healthPath": "/healthz",
@@ -75,6 +81,7 @@
       "name": "Loose Thread",
       "hostname": "conspiracy.alirezaafshan.com",
       "port": 3050,
+      "plot": { "x": -1.5, "z": 0.5 },
       "kind": "archive",
       "description": "An evidence-mapping workspace in its own health-checked container.",
       "healthPath": "/healthz"
@@ -85,6 +92,7 @@
       "name": "Android Hell",
       "hostname": "androidhell.alirezaafshan.com",
       "port": 3060,
+      "plot": { "x": 1.5, "z": 0.5 },
       "kind": "factory",
       "description": "A stateful application whose web container can be swapped without replacing its database.",
       "healthPath": "/healthz",
@@ -98,6 +106,7 @@
       "kind": "postgres",
       "status": "online",
       "scope": "private Docker network",
+      "plot": { "x": -1.5, "z": 1.5 },
       "connectedTo": ["androidhell"],
       "description": "A persistent sidecar database. Deploy Manager swaps the Android Hell app container while this data service stays put."
     }

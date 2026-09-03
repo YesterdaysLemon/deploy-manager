@@ -48,8 +48,10 @@ Every timer run fails closed unless all of these are true:
    SHA;
 4. the downloaded archive is no larger than the configured limit and contains
    only regular files and directories;
-5. the runtime remains dependency-free and `npm run check` passes as the
-   separate, unprivileged `deploy-manager-build` user;
+5. the runtime remains dependency-free and the package-free `npm run check`
+   passes as the separate, unprivileged `deploy-manager-build` user; CI
+   separately runs `npm run check:ci` to rebuild and verify the checked-in
+   Three.js browser bundle;
 6. the new service starts and its loopback `/healthz` endpoint responds.
 
 Tests run against an expendable extraction. The updater then extracts the exact

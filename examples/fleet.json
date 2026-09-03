@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "host": {
+    "name": "Example VPS",
+    "platform": "Ubuntu + Docker",
+    "edge": "Caddy",
+    "manager": "Deploy Manager"
+  },
+  "manager": {
+    "hostname": "deploy.example.com",
+    "port": 9000,
+    "repository": "YesterdaysLemon/deploy-manager",
+    "branch": "main",
+    "probeIntervalMs": 30000,
+    "probeTimeoutMs": 2500
+  },
+  "apps": [
+    {
+      "id": "portfolio",
+      "name": "Portfolio",
+      "description": "A public portfolio promoted through the shared release lane.",
+      "kind": "tower",
+      "repository": "example-org/portfolio",
+      "branch": "main",
+      "secretEnv": "PORTFOLIO_DEPLOY_WEBHOOK_SECRET",
+      "repoDir": "/opt/portfolio/app",
+      "repoUser": "deploy",
+      "imageName": "portfolio",
+      "containerName": "portfolio",
+      "candidateContainerName": "portfolio-candidate",
+      "publicPort": 3000,
+      "candidatePort": 3001,
+      "containerPort": 3000,
+      "healthPath": "/healthz",
+      "hostname": "portfolio.example.com"
+    },
+    {
+      "id": "notes",
+      "name": "Notes",
+      "description": "A small stateful notes app whose database stays on a private network.",
+      "kind": "archive",
+      "repository": "example-org/notes",
+      "branch": "main",
+      "secretEnv": "NOTES_DEPLOY_WEBHOOK_SECRET",
+      "repoDir": "/opt/notes/app",
+      "repoUser": "deploy",
+      "imageName": "notes",
+      "containerName": "notes",
+      "candidateContainerName": "notes-candidate",
+      "publicPort": 3010,
+      "candidatePort": 3011,
+      "containerPort": 3000,
+      "healthPath": "/healthz",
+      "hostname": "notes.example.com",
+      "runtimeEnvFile": "/etc/deploy-manager/runtime-env/notes.env",
+      "dockerNetwork": "notes-private",
+      "datastores": [
+        "notes-postgres"
+      ]
+    }
+  ],
+  "datastores": [
+    {
+      "id": "notes-postgres",
+      "name": "PostgreSQL",
+      "kind": "postgres",
+      "scope": "private Docker network",
+      "description": "Persistent application data that is not replaced during a web rollout."
+    }
+  ]
+}

@@ -44,9 +44,33 @@ jobs:
           payload="$(node -e 'const payload = { event: process.env.GITHUB_EVENT_NAME, branch: process.env.GITHUB_REF_NAME, repo: process.env.GITHUB_REPOSITORY, sha: process.env.GITHUB_SHA }; process.stdout.write(JSON.stringify(payload));')"
           signature="$(node -e 'const crypto = require("crypto"); const secret = process.env.DEPLOY_WEBHOOK_SECRET; const payload = process.argv[1]; process.stdout.write("sha256=" + crypto.createHmac("sha256", secret).update(payload).digest("hex"));' "$payload")"
 
-          curl --fail-with-body --silent --show-error \
+          response="$(curl --fail-with-body --silent --show-error \
             --request POST "$DEPLOY_WEBHOOK_URL" \
             --header "Content-Type: application/json" \
             --header "X-GitHub-Event: push" \
             --header "X-Hub-Signature-256: $signature" \
-            --data "$payload"
+            --data "$payload")"
+
+          job_id="$(node -e 'const response=JSON.parse(process.argv[1]);if(!response?.job?.id||!response?.receipt)process.exit(1);process.stdout.write(response.job.id)' "$response")"
+          receipt="$(node -e 'const response=JSON.parse(process.argv[1]);process.stdout.write(response.receipt)' "$response")"
+          receipt_url="$(node -e 'const webhook=new URL(process.argv[1]);process.stdout.write(new URL(process.argv[2],webhook.origin).toString())' "$DEPLOY_WEBHOOK_URL" "$receipt")"
+          echo "Deploy Manager accepted job $job_id"
+
+          for attempt in $(seq 1 600); do
+            job="$(curl --fail-with-body --silent --show-error "$receipt_url")"
+            status="$(node -e 'const response=JSON.parse(process.argv[1]);process.stdout.write(response?.job?.status??"unknown")' "$job")"
+            case "$status" in
+              succeeded)
+                echo "Deploy Manager job $job_id succeeded"
+                exit 0
+                ;;
+              failed|rolled-back|interrupted)
+                echo "Deploy Manager job $job_id ended with $status" >&2
+                exit 1
+                ;;
+            esac
+            sleep 2
+          done
+
+          echo "Deploy Manager job $job_id did not finish within 20 minutes" >&2
+          exit 1

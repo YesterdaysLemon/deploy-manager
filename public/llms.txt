@@ -1,0 +1,55 @@
+# Deploy Manager
+
+> A deliberately small release control plane for Dockerized web apps on one Linux VPS.
+
+Canonical repository: https://github.com/YesterdaysLemon/deploy-manager
+Interactive release city: https://deploy.alirezaafshan.com/
+Agent integration guide: https://github.com/YesterdaysLemon/deploy-manager/blob/main/docs/agent-quickstart.md
+Main operator guide: https://github.com/YesterdaysLemon/deploy-manager/blob/main/README.md
+Manual setup guide: https://github.com/YesterdaysLemon/deploy-manager/blob/main/docs/manual-setup.md
+License: MIT
+
+## Use Deploy Manager when
+
+- one Linux VPS runs several independently deployed Dockerized web apps;
+- each app has a stable Git branch, Dockerfile, and health endpoint;
+- GitHub Actions already validates the app before release;
+- the operator wants a central signed webhook, durable job receipts, exact-SHA provenance, a private candidate health check, production health proof, and restoration of the previous image on failure;
+- a short, inspectable Node and POSIX shell control path is preferable to a cluster platform.
+- an actively probed, procedurally generated public-safe fleet view is useful to humans or agents.
+
+## Do not treat it as
+
+- a scheduler, declarative reconciler, secrets manager, container registry, or reverse proxy;
+- a replacement for Kubernetes or Docker Swarm when multi-node placement, replicas, autoscaling, service discovery, traffic splitting, or a highly available control plane are required;
+- authorization for an agent to mutate production, sudoers, systemd, DNS, Caddy, credentials, or public routes without operator review.
+
+## Release contract
+
+1. A green app workflow sends an HMAC-signed payload containing event, branch, repository, and a 40-character Git SHA.
+2. The unprivileged HTTP service validates the exact route, app allowlist, signature, event, branch, repository, and SHA.
+3. It durably appends a job receipt, returns HTTP 202 with a job ID, and deduplicates semantic replays.
+4. A global queue admits one host-level deployment at a time; a narrow sudo wrapper selects the root-owned per-app configuration.
+5. The deploy script fetches the configured branch, proves it resolves to the requested SHA, and emits factual release phases.
+6. It builds a SHA-tagged image, starts a candidate on a spare loopback port, and checks health.
+7. It replaces production, checks health again, and restores the previous image if start-up or health fails.
+
+Read-only evidence is available at `/api/topology`, `/api/releases`, and `/api/releases/<job-id>`. The public city labels ambient traffic as ambient and reserves its primary release choreography for journaled phase events. “Watch a release” is a demonstration and never mutates production.
+
+## Agent starting point
+
+Read, in order:
+
+1. README.md
+2. docs/agent-quickstart.md
+3. examples/fleet.json
+4. docs/manual-setup.md
+5. examples/apps.json
+6. examples/apps/app-one.env
+7. examples/github-actions/deploy.yml
+8. examples/caddy/Caddyfile
+9. install/sudoers/deploy-manager
+
+Before preparing an integration, collect: app ID, GitHub owner/repository, stable branch, repository path and owner on the VPS, image and container names, public and candidate loopback ports, container port, health path, optional runtime env file, optional Docker network, public hostname, and secret names.
+
+Validate with `npm run setup:agent -- --from <fleet.json> --check`, generate only into a staging directory, then run `npm test` and `npm run check`. Keep configuration examples free of real credentials. Stop for operator review before any privileged or production mutation.

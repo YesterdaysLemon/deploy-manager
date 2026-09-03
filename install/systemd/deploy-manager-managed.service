@@ -6,6 +6,10 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=deploy-manager
+Group=deploy-manager
+StateDirectory=deploy-manager
+StateDirectoryMode=0750
+UMask=0027
 EnvironmentFile=/etc/deploy-manager/deploy-manager.env
 WorkingDirectory=/opt/deploy-manager-current
 ExecStart=/usr/bin/node /opt/deploy-manager-current/src/server.mjs

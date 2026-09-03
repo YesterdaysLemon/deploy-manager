@@ -55,6 +55,10 @@ log() {
   printf '%s app=%s %s\n' "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" "$APP_ID" "$*" | tee -a "$LOG_FILE"
 }
 
+emit_phase() {
+  log "release_phase=$1 sha=$REQUESTED_SHA"
+}
+
 fail() {
   log "failure sha=${REQUESTED_SHA:-unknown} reason=$*"
   exit 1
@@ -154,6 +158,7 @@ run_container() {
 
 restore_old_image() {
   failure_reason="$1"
+  emit_phase rollback
 
   # A failed `docker run` can still leave a stopped container with the production name.
   # Clear it before restoring the last known-good image.
@@ -177,6 +182,7 @@ log "deploy_start branch=$BRANCH requested_sha=$REQUESTED_SHA started_at=$STARTE
 
 cd "$REPO_DIR" || fail "repo_dir_not_found"
 
+emit_phase fetch
 run_git fetch origin "$BRANCH" || fail "git_fetch_failed"
 run_git checkout "$BRANCH" || fail "git_checkout_failed"
 run_git reset --hard "origin/$BRANCH" || fail "git_reset_failed"
@@ -187,6 +193,7 @@ if [ "$CURRENT_SHA" != "$REQUESTED_SHA" ]; then
   fail "sha_mismatch current=$CURRENT_SHA requested=$REQUESTED_SHA"
 fi
 
+emit_phase build
 build_image || fail "docker_build_failed sha=$CURRENT_SHA"
 
 OLD_CONTAINER_ID="$(docker ps -aq -f "name=^/${CONTAINER_NAME}$" || true)"
@@ -213,8 +220,10 @@ if ! health_check "$CANDIDATE_HEALTH_URL"; then
   fail "candidate_health_check_failed sha=$CURRENT_SHA url=$CANDIDATE_HEALTH_URL"
 fi
 
+emit_phase candidate
 docker rm -f "$CANDIDATE_CONTAINER_NAME" >/dev/null 2>&1 || fail "candidate_rm_failed sha=$CURRENT_SHA"
 
+emit_phase promote
 if [ -n "$OLD_CONTAINER_ID" ]; then
   docker stop "$CONTAINER_NAME" || fail "docker_stop_failed sha=$CURRENT_SHA"
   if ! docker rm "$CONTAINER_NAME"; then
@@ -230,6 +239,7 @@ if ! run_container "$CONTAINER_NAME" "$APP_PORT" "yes" "$NEW_IMAGE" >/dev/null; 
   restore_old_image "docker_run_failed"
 fi
 
+emit_phase verify
 if ! health_check "$HEALTH_URL"; then
   docker logs "$CONTAINER_NAME" 2>&1 | tail -n 80 | tee -a "$LOG_FILE" || true
   restore_old_image "health_check_failed"

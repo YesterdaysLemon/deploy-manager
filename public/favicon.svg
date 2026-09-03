@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Deploy Manager">
+  <rect width="64" height="64" fill="#eee7c8"/>
+  <path d="M11 53V24l21-12 21 12v29Z" fill="#176e69" stroke="#171812" stroke-width="3"/>
+  <path d="M11 24l21 12 21-12M32 12v24M20 35v9M44 35v9" fill="none" stroke="#171812" stroke-width="3"/>
+  <path d="M26 7h18v10H26Z" fill="#b64e2b" stroke="#171812" stroke-width="3"/>
+  <path d="M32 53V42h8v11" fill="#eee7c8" stroke="#171812" stroke-width="3"/>
+</svg>

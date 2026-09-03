@@ -3,13 +3,32 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Central webhook and Docker rollout manager for small VPS-hosted webapps.",
+  "description": "A small, rollback-aware release control plane for Dockerized apps on one Linux VPS.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/YesterdaysLemon/deploy-manager.git"
+  },
   "scripts": {
+    "build:city": "node scripts/build-city3d.mjs",
+    "predev": "npm run build:city",
+    "dev": "node scripts/dev.mjs",
+    "setup": "node scripts/setup.mjs",
+    "setup:agent": "node scripts/setup.mjs --non-interactive --json",
     "start": "node src/server.mjs",
-    "test": "node --test tests/deploy-app.test.mjs tests/docker-network.test.mjs tests/public-homepage.test.mjs tests/self-update.test.mjs",
-    "check": "node --check src/server.mjs && node --check public/app.js && npm test"
+    "test": "node --test tests/city3d.test.mjs tests/deploy-app.test.mjs tests/docker-network.test.mjs tests/probes.test.mjs tests/public-homepage.test.mjs tests/release-journal.test.mjs tests/self-update.test.mjs tests/setup.test.mjs",
+    "test:release": "node --test tests/deploy-app.test.mjs tests/docker-network.test.mjs tests/probes.test.mjs tests/public-homepage.test.mjs tests/release-journal.test.mjs tests/self-update.test.mjs tests/setup.test.mjs",
+    "pretest:visual": "npm run build:city",
+    "test:visual": "playwright test",
+    "check": "node --check src/server.mjs && node --check src/release-journal.mjs && node --check client/city3d.js && node --check client/plot-layout.js && node --check public/app.js && node --check scripts/dev.mjs && node --check scripts/setup.mjs && npm run test:release",
+    "check:ci": "npm run build:city && npm run check && node --test tests/city3d.test.mjs && git diff --exit-code -- public/city3d.bundle.js"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1",
+    "esbuild": "^0.28.2",
+    "three": "^0.185.1"
   }
 }

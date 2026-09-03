@@ -3,596 +3,78 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#d7cea1" />
+    <title>Deploy Manager — a tiny release city</title>
     <meta
       name="description"
-      content="Deploy Manager is a tiny control plane for signed, health-checked, rollback-safe releases across a personal VPS."
+      content="A live, interactive city for the apps and release traffic on one Docker VPS."
     />
-    <meta property="og:title" content="Deploy Manager — a tiny city for safe releases" />
-    <meta
-      property="og:description"
-      content="Explore the live topology and trace a release from Git push to a healthy production container."
-    />
+    <meta name="theme-color" content="#e7dfbd" />
     <meta property="og:type" content="website" />
+    <meta property="og:title" content="Deploy Manager — a tiny release city" />
+    <meta property="og:description" content="Watch one Docker VPS ship, probe, and rebuild its apps." />
     <meta property="og:url" content="https://deploy.alirezaafshan.com/" />
     <meta property="og:image" content="https://deploy.alirezaafshan.com/og.png" />
-    <meta property="og:image:width" content="1731" />
-    <meta property="og:image:height" content="909" />
-    <meta property="og:image:alt" content="An isometric architectural city for Deploy Manager" />
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="Deploy Manager — a tiny city for safe releases" />
-    <meta name="twitter:image" content="https://deploy.alirezaafshan.com/og.png" />
-    <title>Deploy Manager — release city</title>
-    <link rel="stylesheet" href="/styles.css?v=city-4" />
-    <script src="/app.js?v=city-4" defer></script>
+    <link rel="canonical" href="https://deploy.alirezaafshan.com/" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css?v=city-3d-19" />
+    <script src="/city3d.bundle.js?v=city-3d-19" defer></script>
+    <script src="/app.js?v=city-3d-19" defer></script>
   </head>
   <body>
-    <div class="site-shell" id="site-shell" data-view="city">
-      <header class="status-rail">
+    <main class="city-shell" id="site-shell">
+      <p class="sr-only" id="city-instructions">Focus the city and use the left and right arrow keys to move between places. Press Enter to open a selected public service.</p>
+      <p class="sr-only" id="release-mode-note">Watch a release plays a labeled demonstration. Live release movement is driven separately by persisted deployment receipts.</p>
+
+      <section class="city3d-stage is-visible" id="city-3d-scene" aria-label="Interactive release city" aria-describedby="city-instructions">
+        <div class="city3d-loading" role="status">BUILDING CITY</div>
+        <div class="city3d-compass" aria-hidden="true"><span>N</span><i></i></div>
+      </section>
+
+      <header class="city-header">
         <a class="brand" href="/" aria-label="Deploy Manager home">
-          <span class="eyebrow">Control plane / racknerd-f44ac7b</span>
-          <strong>DEPLOY MANAGER</strong>
+          <span class="brand-mark" aria-hidden="true">DM</span>
+          <span class="brand-copy">
+            <strong>Deploy Manager</strong>
+            <small><i class="status-led" id="host-led"></i><span id="host-status">connecting</span></small>
+          </span>
         </a>
 
-        <dl class="status-cell">
-          <dt>VPS</dt>
-          <dd><span class="status-led" aria-hidden="true"></span><span id="host-status">connecting</span></dd>
-        </dl>
-        <dl class="status-cell">
-          <dt>Public worlds</dt>
-          <dd id="route-count">08</dd>
-        </dl>
-        <dl class="status-cell">
-          <dt>Rollout lanes</dt>
-          <dd id="lane-count">07 + 01</dd>
-        </dl>
-        <dl class="status-cell status-release">
-          <dt>Manager release</dt>
-          <dd id="manager-release">07bae6f</dd>
-        </dl>
-
-        <div class="top-actions" aria-label="Visualizer controls">
-          <button class="ink-button accent-button" id="simulate-push" type="button" aria-label="Simulate a push">
-            <span aria-hidden="true">◆</span> Simulate a push
+        <div class="city-actions">
+          <button class="release-button" id="simulate-push" type="button" aria-describedby="release-mode-note">
+            <span class="release-glyph" aria-hidden="true">◆</span>
+            <span id="simulate-label">Watch a release</span>
           </button>
-          <button class="ink-button" id="trace-system" type="button" aria-label="Trace the system">Trace the system</button>
-          <button class="ink-button" id="reset-view" type="button" aria-label="Reset view">Reset view</button>
+          <a class="repo-button" href="https://github.com/YesterdaysLemon/deploy-manager" target="_blank" rel="noreferrer" aria-label="View Deploy Manager source on GitHub (opens in a new tab)">SOURCE ↗</a>
         </div>
       </header>
 
-      <main class="workspace">
-        <aside class="index-panel" aria-label="Visualizer index">
-          <div class="view-switch" role="tablist" aria-label="Visualizer mode">
-            <button class="view-tab is-active" id="city-tab" data-view-target="city" type="button" role="tab" aria-selected="true">
-              Live VPS city
-            </button>
-            <button class="view-tab" id="system-tab" data-view-target="system" type="button" role="tab" aria-selected="false">
-              How it works
-            </button>
+      <section class="selection-card" id="selection-card" aria-live="polite">
+        <div class="selection-topline">
+          <p class="selection-kicker"><i id="selection-led"></i><span id="detail-kicker">CONTROL</span></p>
+          <div class="selection-nav" aria-label="Move between city places">
+            <button id="entity-prev" type="button" aria-label="Previous city place">←</button>
+            <span id="entity-position" aria-hidden="true">1/1</span>
+            <button id="entity-next" type="button" aria-label="Next city place">→</button>
           </div>
+        </div>
+        <h1 id="detail-title">Deploy Manager</h1>
+        <p id="detail-meta">online · release d3adb33</p>
+        <p id="detail-evidence">waiting for release evidence</p>
+        <a id="detail-link" href="#" target="_blank" rel="noreferrer" hidden>OPEN SERVICE ↗</a>
+      </section>
 
-          <div class="index-copy">
-            <p class="panel-kicker" id="index-kicker">The neighborhood</p>
-            <p id="index-intro">
-              A public-safe portrait of the services currently routed through this VPS. Pick a structure to inspect it.
-            </p>
-          </div>
+      <div class="simulation-toast" id="simulation-toast" role="status" hidden>
+        <i aria-hidden="true"></i><span id="simulation-copy">commit received</span>
+      </div>
 
-          <nav class="entity-index" id="entity-index" aria-label="Scene structures"></nav>
+      <nav class="map-controls" aria-label="City camera controls">
+        <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+        <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+        <button id="fit-city" type="button" aria-label="Fit city in view">FIT</button>
+      </nav>
 
-          <div class="legend">
-            <p class="panel-kicker">Map legend</p>
-            <div><span class="legend-swatch is-teal"></span> public traffic / healthy</div>
-            <div><span class="legend-swatch is-rust"></span> release activity</div>
-            <div><span class="legend-swatch is-dashed"></span> private data link</div>
-          </div>
-        </aside>
-
-        <section class="visualizer-panel" aria-labelledby="scene-heading">
-          <div class="scene-heading-row">
-            <div>
-              <p class="panel-kicker" id="scene-kicker">Current topology</p>
-              <h1 id="scene-heading">A tiny city that ships itself</h1>
-              <p class="scene-deck" id="scene-deck">Live inventory, illustrated. Release movement is simulated unless the rail says LIVE.</p>
-            </div>
-            <div class="truth-chip" id="truth-chip">
-              <span class="truth-light" aria-hidden="true"></span>
-              <span id="truth-copy">live topology · steady</span>
-            </div>
-          </div>
-
-          <div class="map-wrap">
-            <div class="map-controls" aria-label="Map camera controls">
-              <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
-              <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
-              <button id="fit-map" class="fit-button" type="button">fit</button>
-            </div>
-
-            <div class="map-viewport" id="map-viewport">
-              <svg
-                class="topology-map"
-                id="topology-map"
-                viewBox="30 20 1340 840"
-                preserveAspectRatio="xMidYMid meet"
-                role="img"
-                aria-labelledby="map-title map-description"
-              >
-                <title id="map-title">Deploy Manager VPS city</title>
-                <desc id="map-description">
-                  An interactive isometric city showing Deploy Manager, the public edge, Docker, eight websites, and a private PostgreSQL database.
-                </desc>
-                <defs>
-                  <pattern id="iso-grid" width="96" height="56" patternUnits="userSpaceOnUse">
-                    <path d="M0 28 48 0 96 28 48 56Z" class="grid-line"></path>
-                  </pattern>
-                  <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(24)">
-                    <rect class="hatch-paper" x="0" y="0" width="7" height="7"></rect>
-                    <line x1="0" y1="0" x2="0" y2="7" class="hatch-line"></line>
-                  </pattern>
-                  <pattern id="tight-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(-24)">
-                    <rect class="hatch-paper" x="0" y="0" width="5" height="5"></rect>
-                    <line x1="0" y1="0" x2="0" y2="5" class="hatch-line"></line>
-                  </pattern>
-                  <marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto">
-                    <path d="M0 0 9 4.5 0 9Z" class="arrow-fill"></path>
-                  </marker>
-                </defs>
-
-                <rect class="infinite-grid" x="-6000" y="-6000" width="12000" height="12000"></rect>
-
-                <g id="city-scene" class="scene is-visible" data-scene="city">
-                  <polygon class="ground-plane" points="52,423 638,82 1342,488 755,828"></polygon>
-
-                  <g class="city-roads connection-layer" aria-hidden="true">
-                    <g class="connection-group network-ring" data-connects="caddy">
-                      <path class="connection-bed" d="M122 482 536 243 1244 652 803 907 122 514Z"></path>
-                      <path class="public-road" d="M122 482 536 243 1244 652 803 907 122 514Z"></path>
-                      <path class="traffic-path" d="M122 482 536 243 1244 652 803 907 122 514Z"></path>
-                    </g>
-
-                    <g class="connection-group" data-connects="caddy galaxy-menu">
-                      <path class="connection-bed" d="M536 243 462 286 462 221"></path>
-                      <path class="public-spur" d="M536 243 462 286 462 221"></path>
-                      <path class="traffic-path" d="M536 243 462 286 462 221"></path>
-                    </g>
-                    <g class="connection-group" data-connects="caddy portfolio">
-                      <path class="connection-bed" d="M536 243 650 177 722 219"></path>
-                      <path class="public-spur" d="M536 243 650 177 722 219"></path>
-                      <path class="traffic-path" d="M536 243 650 177 722 219"></path>
-                    </g>
-                    <g class="connection-group" data-connects="caddy aquarium">
-                      <path class="connection-bed" d="M895 450 895 384 1010 318"></path>
-                      <path class="public-spur" d="M895 450 895 384 1010 318"></path>
-                      <path class="traffic-path" d="M895 450 895 384 1010 318"></path>
-                    </g>
-                    <g class="connection-group" data-connects="caddy birds">
-                      <path class="connection-bed" d="M1088 562 1177 511 1177 466"></path>
-                      <path class="public-spur" d="M1088 562 1177 511 1177 466"></path>
-                      <path class="traffic-path" d="M1088 562 1177 511 1177 466"></path>
-                    </g>
-                    <g class="connection-group" data-connects="caddy celegans">
-                      <path class="connection-bed" d="M1115 726 1080 706 1080 638"></path>
-                      <path class="public-spur" d="M1115 726 1080 706 1080 638"></path>
-                      <path class="traffic-path" d="M1115 726 1080 706 1080 638"></path>
-                    </g>
-                    <g class="connection-group" data-connects="caddy continuity">
-                      <path class="connection-bed" d="M803 907 803 790 800 758"></path>
-                      <path class="public-spur" d="M803 907 803 790 800 758"></path>
-                      <path class="traffic-path" d="M803 907 803 790 800 758"></path>
-                    </g>
-                    <g class="connection-group" data-connects="caddy conspiracy">
-                      <path class="connection-bed" d="M648 818 543 757 543 724"></path>
-                      <path class="public-spur" d="M648 818 543 757 543 724"></path>
-                      <path class="traffic-path" d="M648 818 543 757 543 724"></path>
-                    </g>
-                    <g class="connection-group" data-connects="caddy androidhell">
-                      <path class="connection-bed" d="M289 610 358 650 358 620"></path>
-                      <path class="public-spur" d="M289 610 358 650 358 620"></path>
-                      <path class="traffic-path" d="M289 610 358 650 358 620"></path>
-                    </g>
-
-                    <g class="connection-group deploy-trunk" data-connects="git deploy-manager docker">
-                      <path class="connection-bed" d="M270 338 566 509 818 654"></path>
-                      <path class="service-road" d="M270 338 566 509 818 654"></path>
-                      <path class="release-path" d="M270 338 566 509 818 654"></path>
-                    </g>
-                    <g class="connection-group" data-connects="docker galaxy-menu">
-                      <path class="connection-bed" d="M818 585 676 503 462 380 462 260"></path>
-                      <path class="deploy-spur" d="M818 585 676 503 462 380 462 260"></path>
-                    </g>
-                    <g class="connection-group" data-connects="docker portfolio">
-                      <path class="connection-bed" d="M818 585 722 530 722 238"></path>
-                      <path class="deploy-spur" d="M818 585 722 530 722 238"></path>
-                    </g>
-                    <g class="connection-group" data-connects="docker aquarium">
-                      <path class="connection-bed" d="M818 585 914 530 1010 474 1010 335"></path>
-                      <path class="deploy-spur" d="M818 585 914 530 1010 474 1010 335"></path>
-                    </g>
-                    <g class="connection-group" data-connects="docker birds">
-                      <path class="connection-bed" d="M818 585 996 688 1177 583 1177 481"></path>
-                      <path class="deploy-spur" d="M818 585 996 688 1177 583 1177 481"></path>
-                    </g>
-                    <g class="connection-group" data-connects="docker celegans">
-                      <path class="connection-bed" d="M818 585 947 660 1080 660 1080 640"></path>
-                      <path class="deploy-spur" d="M818 585 947 660 1080 660 1080 640"></path>
-                    </g>
-                    <g class="connection-group" data-connects="docker conspiracy">
-                      <path class="connection-bed" d="M818 585 680 665 543 744 543 724"></path>
-                      <path class="deploy-spur" d="M818 585 680 665 543 744 543 724"></path>
-                    </g>
-                    <g class="connection-group" data-connects="docker androidhell">
-                      <path class="connection-bed" d="M818 585 650 682 518 606 358 699 358 627"></path>
-                      <path class="deploy-spur" d="M818 585 650 682 518 606 358 699 358 627"></path>
-                    </g>
-                    <g class="connection-group continuity-inlet" data-connects="deploy-manager continuity">
-                      <path class="connection-bed" d="M566 509 683 577 683 692 800 760"></path>
-                      <path class="continuity-path" d="M566 509 683 577 683 692 800 760"></path>
-                      <path class="release-path" d="M566 509 683 577 683 692 800 760"></path>
-                    </g>
-                    <g class="connection-group private-connection" data-connects="androidhell androidhell-postgres">
-                      <path class="connection-bed" d="M358 630 279 676 202 721"></path>
-                      <path class="private-link" d="M358 630 279 676 202 721"></path>
-                      <circle class="junction-dot" cx="279" cy="676" r="5"></circle>
-                    </g>
-
-                    <g class="junction-field">
-                      <circle cx="536" cy="243" r="5"></circle>
-                      <circle cx="895" cy="450" r="5"></circle>
-                      <circle cx="1088" cy="562" r="5"></circle>
-                      <circle cx="648" cy="818" r="5"></circle>
-                      <circle cx="289" cy="610" r="5"></circle>
-                    </g>
-                    <text class="road-label" x="92" y="487">HTTPS IN</text>
-                    <text class="road-label" x="305" y="323">SIGNED PUSH / EXACT SHA</text>
-                    <text class="road-label" x="1190" y="697">PUBLIC FIBER RING</text>
-                    <text class="road-label" x="152" y="746">PRIVATE DOCKER NETWORK</text>
-                  </g>
-
-                  <g class="map-entity city-entity" data-entity="caddy" data-kind="control" tabindex="0" role="button" aria-label="Caddy public edge">
-                    <g transform="translate(122 482)">
-                      <path class="structure-shadow" d="M-74 30 0-14 76 30 0 74Z"></path>
-                      <path class="stone-fill" d="M-64 18-64-38-41-52-41 4 41 51 41-5 64-18 64 38 0 75Z"></path>
-                      <path class="face-top" d="M-64-38 0-75 64-38 41-24 0-47-41-24Z"></path>
-                      <path class="gate-cut" d="M-25 37V2L0-13 25 2V66L0 80Z"></path>
-                      <path class="accent-line" d="M-40-2 0 21 40-2"></path>
-                      <text class="entity-code" x="0" y="-25">TLS</text>
-                      <text class="entity-label" x="0" y="105">CADDY GATE</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity" data-entity="git" data-kind="control" tabindex="0" role="button" aria-label="Git push dock">
-                    <g transform="translate(270 302)">
-                      <path class="structure-shadow" d="M-75 42 4-4 83 42 4 88Z"></path>
-                      <path class="face-left" d="M-66 21 0 59V86L-66 48Z"></path>
-                      <path class="face-right" d="M0 59 66 21V48L0 86Z"></path>
-                      <path class="face-top" d="M-66 21 0-18 66 21 0 59Z"></path>
-                      <path class="ink-line" d="M-34 2V-76M-34-76 37-35M37-35V4M-42-66-34-80-26-57"></path>
-                      <path class="cargo accent-fill" d="M5 0 29-14 53 0 29 14Z"></path>
-                      <text class="entity-code" x="-34" y="-88">GIT</text>
-                      <text class="entity-label" x="0" y="107">PUSH DOCK</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity manager-entity" data-entity="deploy-manager" data-kind="control" tabindex="0" role="button" aria-label="Deploy Manager tower">
-                    <g transform="translate(566 413)">
-                      <path class="structure-shadow" d="M-105 65 2 3 109 65 2 127Z"></path>
-                      <path class="tower-left" d="M-72-16 0 26V153L-72 111Z"></path>
-                      <path class="tower-right" d="M0 26 72-16V111L0 153Z"></path>
-                      <path class="tower-top" d="M-72-16 0-58 72-16 0 26Z"></path>
-                      <path class="manager-window" d="M-48 18-15 37V64L-48 45ZM15 37 48 18V45L15 64Z"></path>
-                      <path class="manager-door" d="M-17 102 0 112V151L-17 141ZM0 112 17 102V141L0 151Z"></path>
-                      <path class="antenna ink-line" d="M0-58V-116M-23-92 0-106 23-92M-35-77 0-97 35-77"></path>
-                      <circle class="signal-light" cx="0" cy="-119" r="7"></circle>
-                      <path class="balcony ink-line" d="M-83 72 0 120 83 72M-83 72V88L0 136 83 88V72"></path>
-                      <text class="entity-code manager-mark" x="0" y="1">DM</text>
-                      <text class="entity-label" x="0" y="178">DEPLOY MANAGER</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity" data-entity="docker" data-kind="control" tabindex="0" role="button" aria-label="Docker container switchyard">
-                    <g transform="translate(818 522)">
-                      <path class="structure-shadow" d="M-112 63 0-2 113 63 0 128Z"></path>
-                      <path class="yard-pad" d="M-106 45 0-17 106 45 0 107Z"></path>
-                      <path class="rail ink-line" d="M-80 40 10 92M-54 25 36 77M17 5 91 48"></path>
-                      <g class="container current-container" transform="translate(-43 28)">
-                        <path class="container-left" d="M-38-4 0 18V60L-38 38Z"></path>
-                        <path class="container-right" d="M0 18 38-4V38L0 60Z"></path>
-                        <path class="container-top" d="M-38-4 0-26 38-4 0 18Z"></path>
-                        <text class="tiny-label" x="0" y="4">LIVE</text>
-                      </g>
-                      <g class="container candidate-container" transform="translate(42 28)">
-                        <path class="container-left" d="M-38-4 0 18V60L-38 38Z"></path>
-                        <path class="container-right" d="M0 18 38-4V38L0 60Z"></path>
-                        <path class="container-top" d="M-38-4 0-26 38-4 0 18Z"></path>
-                        <text class="tiny-label" x="0" y="4">NEXT</text>
-                      </g>
-                      <g class="rollback-crate" transform="translate(0 85)">
-                        <path class="crate-line" d="M-27 0 0-16 27 0 0 16ZM0 16V43M-27 0V27L0 43 27 27V0"></path>
-                        <text class="micro-label" x="0" y="58">ROLLBACK</text>
-                      </g>
-                      <text class="entity-label" x="0" y="151">CONTAINER SWITCHYARD</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity site-building" data-entity="galaxy-menu" data-kind="route" tabindex="0" role="button" aria-label="Galaxy Menu">
-                    <g transform="translate(462 177)">
-                      <ellipse class="structure-shadow" cx="0" cy="52" rx="84" ry="34"></ellipse>
-                      <path class="observatory-base" d="M-62 10 0 46 62 10V70L0 106-62 70Z"></path>
-                      <path class="dome" d="M-62 10C-52-66 52-66 62 10L0 46Z"></path>
-                      <path class="dome-slit" d="M-7-45 5-47 14 37 0 46Z"></path>
-                      <path class="telescope ink-line" d="M12-34 62-78M49-91 76-75 62-53M31-56 47-40"></path>
-                      <text class="entity-code" x="0" y="19">GM</text>
-                      <text class="entity-label" x="0" y="129">GALAXY MENU</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity site-building" data-entity="portfolio" data-kind="route" tabindex="0" role="button" aria-label="Portfolio">
-                    <g transform="translate(722 183)">
-                      <path class="structure-shadow" d="M-74 45 0 2 75 45 0 88Z"></path>
-                      <path class="face-left tall-face" d="M-48-55 0-27V104L-48 76Z"></path>
-                      <path class="face-right tall-face" d="M0-27 48-55V76L0 104Z"></path>
-                      <path class="face-top" d="M-48-55 0-83 48-55 0-27Z"></path>
-                      <path class="window-stack" d="M-34-30-9-15V0L-34-15ZM-34 4-9 19V34L-34 19ZM-34 38-9 53V68L-34 53ZM9-15 34-30V-15L9 0ZM9 19 34 4V19L9 34ZM9 53 34 38V53L9 68Z"></path>
-                      <path class="flag ink-line" d="M0-83V-118M0-116 41-103 0-89"></path>
-                      <text class="entity-code" x="0" y="-43">P</text>
-                      <text class="entity-label" x="0" y="127">PORTFOLIO</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity site-building" data-entity="aquarium" data-kind="route" tabindex="0" role="button" aria-label="Aquarium">
-                    <g transform="translate(1010 282)">
-                      <path class="structure-shadow" d="M-83 42 0-6 83 42 0 90Z"></path>
-                      <path class="tank-left glass-face" d="M-68-10 0 29V93L-68 54Z"></path>
-                      <path class="tank-right glass-face" d="M0 29 68-10V54L0 93Z"></path>
-                      <path class="water-top" d="M-68-10 0-50 68-10 0 29Z"></path>
-                      <path class="fish-glyph" d="M-45 25C-26 10-9 13 4 25-10 38-27 40-45 25ZM4 25 22 13V37Z"></path>
-                      <circle class="bubble" cx="36" cy="12" r="5"></circle>
-                      <circle class="bubble" cx="46" cy="-5" r="3"></circle>
-                      <text class="entity-label" x="0" y="116">AQUARIUM</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity site-building" data-entity="birds" data-kind="route" tabindex="0" role="button" aria-label="Bird of the Day">
-                    <g transform="translate(1177 427)">
-                      <path class="structure-shadow" d="M-76 40 0-4 76 40 0 84Z"></path>
-                      <path class="aviary-frame" d="M-57 13 0-20 57 13V71L0 104-57 71ZM-57 13 0 46 57 13M0-20V104M-57 42 0 75 57 42"></path>
-                      <path class="aviary-roof" d="M-65 8 0-63 65 8 57 13 0-20-57 13Z"></path>
-                      <path class="bird-glyph" d="M-29 31Q-13 14 0 32Q13 14 29 31Q10 25 0 45Q-10 25-29 31Z"></path>
-                      <text class="entity-label" x="0" y="127">BIRD OF THE DAY</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity site-building" data-entity="celegans" data-kind="route" tabindex="0" role="button" aria-label="C. elegans simulation lab">
-                    <g transform="translate(1080 601)">
-                      <path class="structure-shadow" d="M-84 45 0-4 84 45 0 94Z"></path>
-                      <path class="lab-left" d="M-68 5 0 44V99L-68 60Z"></path>
-                      <path class="lab-right" d="M0 44 68 5V60L0 99Z"></path>
-                      <path class="lab-roof" d="M-68 5-25-45 43-6 68 5 0 44Z"></path>
-                      <path class="microscope ink-line" d="M-24 33Q-8-10 20 6M18-3 35 8 23 29M-34 51H31M-7 26V50"></path>
-                      <path class="chimney" d="M27-20 43-29 56-21 40-12Z"></path>
-                      <text class="entity-label" x="0" y="122">C. ELEGANS LAB</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity site-building" data-entity="continuity" data-kind="route" tabindex="0" role="button" aria-label="Codex Continuity bridge">
-                    <g transform="translate(800 720)">
-                      <path class="bridge-shadow" d="M-111 5-49-31 104 57 43 93Z"></path>
-                      <path class="bridge-deck" d="M-105-5-51-36 105 54 51 85Z"></path>
-                      <path class="bridge-edge" d="M-105-5V14L51 104V85ZM51 85 105 54V73L51 104Z"></path>
-                      <path class="bridge-cable ink-line" d="M-62-42V33M62 29V104M-62-42 62 80M-39-19V45M-16 3V58M8 27V72M33 51V86"></path>
-                      <text class="entity-label" x="0" y="128">CODEX CONTINUITY</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity site-building" data-entity="conspiracy" data-kind="route" tabindex="0" role="button" aria-label="Loose Thread archive">
-                    <g transform="translate(543 687)">
-                      <path class="structure-shadow" d="M-82 41 0-7 82 41 0 89Z"></path>
-                      <path class="archive-left" d="M-64-9 0 28V96L-64 59Z"></path>
-                      <path class="archive-right" d="M0 28 64-9V59L0 96Z"></path>
-                      <path class="archive-top" d="M-64-9 0-47 64-9 0 28Z"></path>
-                      <path class="drawer-lines" d="M-48 8-10 30V48L-48 26ZM-48 34-10 56V74L-48 52ZM10 30 48 8V26L10 48ZM10 56 48 34V52L10 74Z"></path>
-                      <path class="thread accent-line" d="M-35-21C-4-2 13-42 44-23"></path>
-                      <text class="entity-label" x="0" y="119">LOOSE THREAD</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity site-building" data-entity="androidhell" data-kind="route" tabindex="0" role="button" aria-label="Android Hell application">
-                    <g transform="translate(358 583)">
-                      <path class="structure-shadow" d="M-90 48 0-4 90 48 0 100Z"></path>
-                      <path class="factory-left" d="M-72 6 0 48V112L-72 70Z"></path>
-                      <path class="factory-right" d="M0 48 72 6V70L0 112Z"></path>
-                      <path class="saw-roof" d="M-72 6-48-27-21-11 3-44 30-28 54-61 72-50 72 6 0 48Z"></path>
-                      <path class="smokestack" d="M32-42V-102L56-88V-28ZM35-102 45-108 59-100 56-88Z"></path>
-                      <path class="factory-window" d="M-52 25-15 46V67L-52 46ZM15 46 52 25V46L15 67Z"></path>
-                      <text class="entity-code" x="0" y="20">AH</text>
-                      <text class="entity-label" x="0" y="136">ANDROID HELL</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity city-entity datastore-building" data-entity="androidhell-postgres" data-kind="datastore" tabindex="0" role="button" aria-label="PostgreSQL 17 database">
-                    <g transform="translate(202 671)">
-                      <ellipse class="structure-shadow" cx="0" cy="56" rx="70" ry="29"></ellipse>
-                      <path class="silo-body" d="M-50-4C-50 17-28 29 0 29S50 17 50-4V73C50 94 28 106 0 106S-50 94-50 73Z"></path>
-                      <ellipse class="silo-top" cx="0" cy="-4" rx="50" ry="29"></ellipse>
-                      <path class="silo-rings" d="M-50 22C-50 43-28 55 0 55S50 43 50 22M-50 48C-50 69-28 81 0 81S50 69 50 48"></path>
-                      <text class="entity-code" x="0" y="3">PG</text>
-                      <text class="entity-label" x="0" y="130">POSTGRES 17</text>
-                    </g>
-                  </g>
-
-                  <g id="push-packet" class="push-packet" aria-hidden="true">
-                    <path d="M-18 0 0-11 18 0 0 11Z"></path>
-                    <text x="0" y="3">SHA</text>
-                  </g>
-                </g>
-
-                <g id="system-scene" class="scene" data-scene="system" aria-hidden="true">
-                  <polygon class="ground-plane" points="48,510 598,190 1350,624 800,944"></polygon>
-
-                  <g class="system-flow" aria-hidden="true">
-                    <path class="system-route-bed" d="M156 523 290 446"></path>
-                    <path class="system-route-bed" d="M342 420 449 358"></path>
-                    <path class="system-route-bed" d="M514 355 630 422"></path>
-                    <path class="system-route-bed" d="M691 455 801 519"></path>
-                    <path class="system-route-bed" d="M865 514 983 446"></path>
-                    <path class="system-route-bed" d="M1035 477 1142 539"></path>
-                    <path class="system-route-bed" d="M1138 590 1012 663"></path>
-                    <path class="system-route-bed" d="M968 688 805 782 648 691"></path>
-                    <path class="system-route" data-step-line="webhook" d="M156 523 290 446"></path>
-                    <path class="system-route" data-step-line="identity" d="M342 420 449 358"></path>
-                    <path class="system-route" data-step-line="checkout" d="M514 355 630 422"></path>
-                    <path class="system-route" data-step-line="build" d="M691 455 801 519"></path>
-                    <path class="system-route" data-step-line="candidate" d="M865 514 983 446"></path>
-                    <path class="system-route" data-step-line="promote" d="M1035 477 1142 539"></path>
-                    <path class="system-route" data-step-line="verify" d="M1138 590 1012 663"></path>
-                    <path class="rollback-route" data-step-line="rollback" d="M968 688 805 782 648 691"></path>
-                  </g>
-
-                  <g class="map-entity system-entity" data-entity="webhook" data-kind="step" tabindex="0" role="button" aria-label="Signed webhook receiver">
-                    <g transform="translate(128 518)">
-                      <path class="radio-base" d="M-60 17 0-18 60 17 0 52Z"></path>
-                      <path class="radio-mast ink-line" d="M0-18V-114M-30-88Q0-114 30-88M-49-70Q0-116 49-70"></path>
-                      <circle class="signal-light" cx="0" cy="-116" r="8"></circle>
-                      <path class="dish" d="M-55-35Q0 2 55-35Q11-9 0-66Q-11-9-55-35Z"></path>
-                      <text class="entity-label" x="0" y="78">SIGNED WEBHOOK</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity system-entity" data-entity="identity" data-kind="step" tabindex="0" role="button" aria-label="Identity gate">
-                    <g transform="translate(320 414)">
-                      <path class="structure-shadow" d="M-67 39 0 0 67 39 0 78Z"></path>
-                      <path class="stone-fill" d="M-53 20V-45L0-76 53-45V20L29 34V-28L0-45-29-28V34Z"></path>
-                      <path class="gate-bars" d="M-20-24V39M0-36V50M20-24V39"></path>
-                      <path class="seal accent-fill" d="M0-91 13-83V-68L0-60-13-68V-83Z"></path>
-                      <text class="entity-label" x="0" y="94">IDENTITY GATE</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity system-entity" data-entity="checkout" data-kind="step" tabindex="0" role="button" aria-label="Exact SHA checkout crane">
-                    <g transform="translate(486 338)">
-                      <path class="repo-stack" d="M-65 30 0-8 65 30 0 68ZM-65 47 0 85 65 47M-65 64 0 102 65 64"></path>
-                      <path class="crane ink-line" d="M-30 12V-82M-30-82 55-33M55-33V16M-40-70-30-89-19-58"></path>
-                      <rect class="sha-tag" x="34" y="3" width="43" height="23"></rect>
-                      <text class="micro-label" x="55" y="19">SHA</text>
-                      <text class="entity-label" x="0" y="128">EXACT CHECKOUT</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity system-entity" data-entity="build" data-kind="step" tabindex="0" role="button" aria-label="Image build factory">
-                    <g transform="translate(663 432)">
-                      <path class="factory-left" d="M-72 6 0 48V115L-72 73Z"></path>
-                      <path class="factory-right" d="M0 48 72 6V73L0 115Z"></path>
-                      <path class="saw-roof" d="M-72 6-48-26-18-9 6-41 36-24 58-55 72-47V6L0 48Z"></path>
-                      <path class="smokestack" d="M31-37V-93L55-79V-23Z"></path>
-                      <path class="gear-glyph" d="M0 47m-22 0a22 22 0 1 0 44 0a22 22 0 1 0-44 0M0 47m-7 0a7 7 0 1 0 14 0a7 7 0 1 0-14 0"></path>
-                      <text class="entity-label" x="0" y="140">IMAGE FOUNDRY</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity system-entity" data-entity="candidate" data-kind="step" tabindex="0" role="button" aria-label="Candidate health chamber">
-                    <g transform="translate(834 523)">
-                      <path class="chamber-base" d="M-76 30 0-14 76 30 0 74Z"></path>
-                      <path class="glass-dome" d="M-55 20V-34Q0-82 55-34V20L0 52Z"></path>
-                      <path class="candidate-capsule" d="M-22-12 0-25 22-12V28L0 41-22 28Z"></path>
-                      <path class="pulse-line" d="M-45 1H-22L-13-15 2 18 13-4H45"></path>
-                      <text class="entity-label" x="0" y="96">HEALTH CHAMBER</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity system-entity" data-entity="promote" data-kind="step" tabindex="0" role="button" aria-label="Atomic promotion switchyard">
-                    <g transform="translate(1010 442)">
-                      <path class="yard-pad" d="M-86 35 0-15 86 35 0 85Z"></path>
-                      <path class="switch-rail" d="M-61 29 9 70M-36 15 34 56M-8-1 61 39M-8-1 31-23"></path>
-                      <g class="mini-container" transform="translate(-18 26)">
-                        <path d="M-29-2 0 15V45L-29 28ZM0 15 29-2V28L0 45ZM-29-2 0-19 29-2 0 15Z"></path>
-                      </g>
-                      <path class="lever accent-line" d="M35 3 59-46M49-48 69-36"></path>
-                      <text class="entity-label" x="0" y="107">ATOMIC SWITCH</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity system-entity" data-entity="verify" data-kind="step" tabindex="0" role="button" aria-label="Production health beacon">
-                    <g transform="translate(1169 552)">
-                      <path class="beacon-base" d="M-56 23 0-10 56 23 0 56Z"></path>
-                      <path class="beacon-tower" d="M-24 17-11-77H11L24 17 0 31Z"></path>
-                      <path class="beacon-light" d="M-24-78Q0-107 24-78L14-57H-14Z"></path>
-                      <path class="signal-arc" d="M-37-103Q0-130 37-103M-57-119Q0-163 57-119"></path>
-                      <text class="entity-label" x="0" y="79">PRODUCTION PROOF</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity system-entity" data-entity="rollback" data-kind="step" tabindex="0" role="button" aria-label="Known-good rollback vault">
-                    <g transform="translate(985 690)">
-                      <path class="vault-left" d="M-68-9 0 30V100L-68 61Z"></path>
-                      <path class="vault-right" d="M0 30 68-9V61L0 100Z"></path>
-                      <path class="vault-top" d="M-68-9 0-49 68-9 0 30Z"></path>
-                      <ellipse class="vault-door" cx="27" cy="48" rx="25" ry="34"></ellipse>
-                      <path class="vault-wheel" d="M27 30V66M10 48H44M15 36 39 60M39 36 15 60"></path>
-                      <text class="entity-label" x="0" y="124">ROLLBACK VAULT</text>
-                    </g>
-                  </g>
-
-                  <g class="map-entity system-entity" data-entity="runner" data-kind="step" tabindex="0" role="button" aria-label="Root-owned deploy runner">
-                    <g transform="translate(625 692)">
-                      <path class="runner-plinth" d="M-71 19 0-22 71 19 0 60Z"></path>
-                      <path class="key-glyph" d="M-26 11A20 20 0 1 1 0 31L42 55 53 48 65 55M-27 11A7 7 0 1 0-14 18"></path>
-                      <text class="entity-label" x="0" y="84">NARROW ROOT RUNNER</text>
-                    </g>
-                  </g>
-                </g>
-              </svg>
-            </div>
-
-            <div class="simulation-strip" id="simulation-strip" aria-live="polite">
-              <span class="strip-label">CITY RADIO</span>
-              <span id="simulation-copy">Topology is live. Pushes and swaps are illustrated only when you press simulate.</span>
-              <span class="strip-time" id="sample-time">sampling…</span>
-            </div>
-          </div>
-
-          <p class="map-hint">drag to pan · wheel or ± to zoom · fit always brings the whole scene home</p>
-        </section>
-
-        <aside class="detail-panel" aria-live="polite">
-          <div class="detail-tabs" role="tablist" aria-label="Structure details">
-            <button class="detail-tab is-active" id="overview-tab" type="button" role="tab" aria-selected="true">What it does</button>
-            <button class="detail-tab" id="wiring-tab" type="button" role="tab" aria-selected="false">How it is wired</button>
-          </div>
-
-          <div class="detail-content">
-            <p class="panel-kicker" id="detail-kicker">The control tower</p>
-            <h2 id="detail-title">Deploy Manager</h2>
-            <p class="detail-deck" id="detail-deck">One quiet service choreographing safe releases.</p>
-
-            <div class="detail-rule"></div>
-            <h3 id="detail-heading">What it does</h3>
-            <div class="detail-body" id="detail-body"></div>
-
-            <section class="facts-section" aria-labelledby="facts-heading">
-              <h3 id="facts-heading">Signals on record</h3>
-              <dl class="fact-list" id="fact-list"></dl>
-            </section>
-
-            <section class="event-log" aria-labelledby="event-heading">
-              <div class="event-heading-row">
-                <h3 id="event-heading">Release radio</h3>
-                <span id="event-mode">REAL STATE</span>
-              </div>
-              <ol id="event-list">
-                <li><time>now</time><span>Seven shared rollout lanes report steady.</span></li>
-                <li><time>live</time><span>Caddy, Docker, and Deploy Manager are online.</span></li>
-                <li><time>note</time><span>Simulation never sends a production request.</span></li>
-              </ol>
-            </section>
-          </div>
-        </aside>
-      </main>
-
-      <footer class="footer-rail">
-        <span><b>REAL</b> routes, ports, health paths, control plane, and confirmed datastore relationship</span>
-        <span><b>SIMULATED</b> SHA packets, build timing, health pulses, and container swaps</span>
-        <span id="audit-stamp">inventory audited 2026-09-02</span>
-      </footer>
-    </div>
+      <p class="quiet-caption"><span id="fleet-summary">8 services</span><span aria-hidden="true"> · </span>ambient traffic · drag to orbit</p>
+    </main>
   </body>
 </html>

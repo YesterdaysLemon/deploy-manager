@@ -137,6 +137,23 @@ test("pulled code is checked unprivileged and activation has health rollback", (
   );
 });
 
+test("promoted release checks stay dependency-free", () => {
+  const pkg = JSON.parse(read("package.json"));
+
+  for (const key of ["dependencies", "optionalDependencies", "peerDependencies"]) {
+    assert.equal(
+      Object.keys(pkg[key] ?? {}).length,
+      0,
+      `${key} must stay empty because the VPS release does not install packages`,
+    );
+  }
+
+  assert.match(pkg.scripts.check, /npm run test:release/);
+  assert.doesNotMatch(pkg.scripts.check, /build:city|npm test(?:\s|$)/);
+  assert.equal(pkg.scripts.prestart, undefined);
+  assert.match(pkg.scripts["check:ci"], /npm run build:city/);
+});
+
 test("managed service follows only the atomic active link", () => {
   const service = read("install/systemd/deploy-manager-managed.service");
   const timer = read("install/systemd/deploy-manager-update.timer");
