@@ -96,6 +96,7 @@ export const GHOST_MODEL_KEYS = Object.freeze([
 ]);
 
 export const AMBIENT_DELIVERY_COUNT = 3;
+export const REDUCED_MOTION_FRAME_MS = 500;
 export const HIGHWAY_SIGN_ROTATION = 0;
 export const ROAD_ASSET_METRICS = Object.freeze({
   tileScale: 2.28,
@@ -1349,10 +1350,16 @@ export class City3D {
     this.visible = true;
     this.motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
     this.reducedMotion = this.motionPreference.matches;
+    this.lastReducedMotionFrame = -Infinity;
     this.stage.dataset.motion = this.reducedMotion ? "reduced" : "full";
     this.onMotionPreferenceChange = (event) => {
       this.reducedMotion = event.matches;
+      this.lastReducedMotionFrame = -Infinity;
       this.stage.dataset.motion = this.reducedMotion ? "reduced" : "full";
+      if (this.renderer) {
+        this.renderer.shadowMap.autoUpdate = !this.reducedMotion;
+        this.renderer.shadowMap.needsUpdate = true;
+      }
     };
     this.motionPreference.addEventListener?.("change", this.onMotionPreferenceChange);
     this.startedAt = performance.now();
@@ -1378,6 +1385,8 @@ export class City3D {
     this.renderer.toneMappingExposure = 0.94;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.autoUpdate = !this.reducedMotion;
+    this.renderer.shadowMap.needsUpdate = true;
     this.renderer.domElement.className = "city3d-canvas";
     this.renderer.domElement.setAttribute("aria-label", "Interactive 3D map of the Deploy Manager release city");
     this.renderer.domElement.setAttribute("aria-describedby", "city-instructions");
@@ -1608,6 +1617,7 @@ export class City3D {
     if (generation !== this.worldGeneration) return false;
     const failures = results.filter((result) => result.status === "rejected");
     this.stage.dataset.loadedAssets = [...this.loadedAssets].sort().join(",");
+    this.renderer.shadowMap.needsUpdate = true;
     if (this.loading) {
       this.loading.hidden = true;
       if (failures.length) this.stage.dataset.assetWarnings = String(failures.length);
@@ -2696,11 +2706,16 @@ export class City3D {
     return false;
   }
 
-  animate() {
+  animate(frameTime = performance.now()) {
     if (this.destroyed) return;
-    this.animationFrame = requestAnimationFrame(() => this.animate());
+    this.animationFrame = requestAnimationFrame((nextFrameTime) => this.animate(nextFrameTime));
     if (!this.visible) return;
-    const elapsed = (performance.now() - this.startedAt) / 1000;
+    if (
+      this.reducedMotion
+      && frameTime - this.lastReducedMotionFrame < REDUCED_MOTION_FRAME_MS
+    ) return;
+    if (this.reducedMotion) this.lastReducedMotionFrame = frameTime;
+    const elapsed = (frameTime - this.startedAt) / 1000;
     const motionElapsed = this.reducedMotion ? 0 : elapsed;
     this.controls.update();
     if (this.waterMaterial) this.waterMaterial.uniforms.uTime.value = motionElapsed;

@@ -16,6 +16,7 @@ import {
   HIGHWAY_SIGN_ROTATION,
   OCEAN_WAVE_SETTINGS,
   RAIL_APPROACH,
+  REDUCED_MOTION_FRAME_MS,
   ROAD_ASSET_METRICS,
   ROAD_TILE_ROTATIONS,
   TERRAIN_CONFIG,
@@ -255,6 +256,7 @@ test("the clear default view uses continuous protected terrain and Acerola-style
   assert.equal(TERRAIN_CONFIG.octaves, 6);
   assert.equal(OCEAN_WAVE_SETTINGS.frequencyBands, 4);
   assert.equal(OCEAN_WAVE_SETTINGS.frequencyMultiplier, 1.47);
+  assert.ok(REDUCED_MOTION_FRAME_MS >= 250);
   assert.equal(OCEAN_WAVE_SETTINGS.amplitudeMultiplier, 0.67);
   assert.ok(OCEAN_WAVE_SETTINGS.fragmentIterations > OCEAN_WAVE_SETTINGS.vertexIterations);
   assert.notEqual(oceanWaveHeightAt(24, 4, 0), oceanWaveHeightAt(24, 4, 3));
