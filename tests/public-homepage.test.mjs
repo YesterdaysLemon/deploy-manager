@@ -3,6 +3,8 @@ import { spawn } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { createServer } from "node:net";
 import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -33,6 +35,33 @@ async function waitForServer(url, child) {
   }
   throw new Error("preview server did not become ready");
 }
+
+test("immutable installed releases record one health-confirmed observation across restarts",async()=>{
+  const temporary=fs.mkdtempSync(path.join(os.tmpdir(),"manager-installed-"));
+  const sha="a".repeat(40),release=path.join(temporary,sha),journal=path.join(temporary,"journal.jsonl");
+  fs.mkdirSync(release);
+  for(const folder of ["src","public","config"])fs.cpSync(path.join(ROOT,folder),path.join(release,folder),{recursive:true});
+  try {
+    for(let boot=0;boot<2;boot++) {
+      const port=await reservePort(),url=`http://127.0.0.1:${port}`;
+      const child=spawn(process.execPath,[path.join(release,"src","server.mjs")],{cwd:release,env:{...process.env,
+        DEPLOY_MANAGER_APPS_FILE:path.join(ROOT,"examples","apps.json"),DEPLOY_MANAGER_HOST:"127.0.0.1",DEPLOY_MANAGER_PORT:String(port),
+        DEPLOY_MANAGER_RELEASE_SHA:"",DEPLOY_MANAGER_JOURNAL_FILE:journal,DEPLOY_MANAGER_PROBES_ENABLED:"false",
+        PORTFOLIO_DEPLOY_WEBHOOK_SECRET:"test-only",APP_ONE_DEPLOY_WEBHOOK_SECRET:"test-only",APP_TWO_DEPLOY_WEBHOOK_SECRET:"test-only",
+      },stdio:"ignore"});
+      try {
+        await waitForServer(url,child);
+        let data;
+        for(let i=0;i<50;i++){data=await(await fetch(`${url}/api/topology`)).json();if(data.releases.length)break;await new Promise(r=>setTimeout(r,20));}
+        assert.equal(data.releases.length,1);assert.equal(data.releases[0].source,"manager-observation");
+        assert.equal(data.releases[0].phase,"serving");assert.equal(data.releases[0].evidence,"running-release-local-health");
+        assert.equal(data.releaseCursor,1);assert.equal(data.activeDeployments,0);assert.equal(data.queuedDeployments,0);
+      } finally {
+        if(child.exitCode===null)await new Promise(resolve=>{child.once("exit",resolve);child.kill();});
+      }
+    }
+  } finally {fs.rmSync(temporary,{recursive:true,force:true});}
+});
 
 test("public release city stays focused and does not leak deploy secrets", async (context) => {
   const port = await reservePort();

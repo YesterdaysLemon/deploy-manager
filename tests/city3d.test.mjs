@@ -42,10 +42,39 @@ import { OCEAN_WAVES, coastXAt } from "../client/ocean.js";
 import { createContinuations, continuationPoint, continuationDistance, visibleChunkKeys, createSurfaceTile, WorldStream } from "../client/world-stream.js";
 import { createBoulevard, roadStrip, continuousRail, RAIL_SPACING } from "../client/transport.js";
 import { batchStaticScenery } from "../client/render-batch.js";
+import { railSchedule, portSchedule, createHarborApproach } from "../client/city-life.js";
 import { SIGNAL_JUNCTION, advanceCityTraffic, signalPhase, vehiclePose, vehiclesOverlap, laneCurve } from "../client/city-traffic.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const topology = JSON.parse(readFileSync(new URL("../config/public-topology.json", import.meta.url), "utf8"));
+
+test("station timetable dwells for boarding and preserves separation from freight",()=>{
+  const length=170,station=80;
+  assert.equal(railSchedule(3,length,station).dwelling,true);
+  assert.equal(railSchedule(3,length,station).distance,station);
+  assert.equal(railSchedule(9,length,station).dwelling,false);
+  for(let t=0;t<700;t+=.2){
+    const a=railSchedule(t,length,station,0),b=railSchedule(t,length,station,.56);
+    const gap=Math.abs(a.distance-b.distance);assert.ok(Math.min(gap,length-gap)>15);
+  }
+});
+
+test("harbor schedule transfers a parcel before its delivery truck departs",()=>{
+  assert.equal(portSchedule(10).phase,"arriving");
+  assert.equal(portSchedule(30).phase,"unloading");
+  assert.equal(portSchedule(43).truckOut,0);
+  assert.equal(portSchedule(60).phase,"delivering");
+  assert.equal(portSchedule(80).phase,"returning");
+  assert.equal(portSchedule(110).phase,"waiting");
+  assert.deepEqual(portSchedule(120),portSchedule(0));
+  const p=createPerimeterBands(createPlotLayout(topology)),t=createTransitCurves(p),plan=createRegionalPlan(p,t.coastline);
+  const approach=createHarborApproach(plan.harbor,p.coast.shoreX);
+  for(const point of approach.getSpacedPoints(300)) {
+    const offset=point.x-coastXAt(point.z,p.coast.shoreX);
+    assert.ok(offset>2,"working boat touches shore");
+    assert.ok(offset<5,"working boat intrudes into the through-shipping lane");
+  }
+});
 
 for(const dispatchAt of [10,40,80]) test(`production courier loops deliver without collision or deadlock at phase ${dispatchAt}`,()=>{
   const layout=createPlotLayout(topology),docker=layout.entities.find(e=>e.id==="docker"),targets=chooseAmbientDeliveryTargets(layout);

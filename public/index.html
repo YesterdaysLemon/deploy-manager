@@ -17,9 +17,9 @@
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="canonical" href="https://deploy.alirezaafshan.com/" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=city-3d-29" />
-    <script src="/city3d.bundle.js?v=city-3d-29" defer></script>
-    <script src="/app.js?v=city-3d-29" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=city-3d-33" />
+    <script src="/city3d.bundle.js?v=city-3d-33" defer></script>
+    <script src="/app.js?v=city-3d-33" defer></script>
   </head>
   <body>
     <main class="city-shell" id="site-shell">
@@ -76,5 +76,18 @@
 
       <p class="quiet-caption"><span id="fleet-summary">8 services</span><span aria-hidden="true"> · </span>ambient traffic · drag to orbit</p>
     </main>
+    <dialog id="build-city-dialog" aria-labelledby="build-city-title">
+      <button id="close-build-city" class="setup-close" aria-label="Close setup options">×</button>
+      <p class="setup-eyebrow">YOUR SERVER, YOUR LITTLE WORLD</p>
+      <h2 id="build-city-title">Build your own city.</h2>
+      <div class="setup-paths">
+        <a href="https://github.com/YesterdaysLemon/deploy-manager/blob/main/docs/manual-setup.md" target="_blank" rel="noreferrer"><strong>I’ll set it up ↗</strong><span>A small VPS, Docker, and a guided setup.</span></a>
+        <a href="https://github.com/YesterdaysLemon/deploy-manager/blob/main/docs/agent-quickstart.md" target="_blank" rel="noreferrer"><strong>My agent will help ↗</strong><span>A reviewable plan before anything goes live.</span></a>
+      </div>
+      <button id="copy-agent-brief">COPY AGENT BRIEF</button>
+      <p id="agent-copy-status" role="status"></p>
+      <textarea id="agent-brief-fallback" aria-label="Agent setup brief" readonly hidden></textarea>
+      <p class="setup-footnote">MIT licensed · one VPS · you approve production changes</p>
+    </dialog>
   </body>
 </html>

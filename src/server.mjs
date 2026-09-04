@@ -907,4 +907,19 @@ server.listen(Number(DEPLOY_MANAGER_PORT), DEPLOY_MANAGER_HOST, () => {
   console.log(
     `deploy manager listening on http://${DEPLOY_MANAGER_HOST}:${DEPLOY_MANAGER_PORT}`,
   );
+  // Only immutable SHA-named installations produce self-update evidence.
+  // Local previews and a configured display SHA must not fabricate receipts.
+  let installed;
+  try {installed=realpathSync(fileURLToPath(import.meta.url)).match(/[\\/]([0-9a-f]{40})[\\/]src[\\/]server\.mjs$/i)?.[1];}
+  catch {return;}
+  if (installed) {
+    const address=server.address();
+    const host=DEPLOY_MANAGER_HOST.includes(":") ? "[::1]" : "127.0.0.1";
+    void fetch(`http://${host}:${address.port}/healthz`,{signal:AbortSignal.timeout(5000)})
+      .then(async response=> {
+        if (!response.ok || (await response.json()).ok!==true) throw new Error("local health not confirmed");
+        releaseJournal.observeManagerRelease(installed);
+      })
+      .catch(error=>console.error("Unable to record manager observation",error.message));
+  }
 });

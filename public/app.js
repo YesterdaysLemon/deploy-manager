@@ -121,6 +121,7 @@ function entityIds() {
 }
 
 function releaseFor(entity) {
+  if (entity.id === "deploy-manager") return (payload?.releases??[]).find(release=>release.appId==="deploy-manager") ?? payload?.releases?.[0] ?? null;
   const appId = entity.appId ?? (entity.kind === "route" ? entity.id : null);
   if (appId) return (payload?.releases ?? []).find((release) => release.appId === appId) ?? null;
   if (["deploy-manager", "docker", "git"].includes(entity.id)) return payload?.releases?.[0] ?? null;
@@ -141,6 +142,9 @@ function timeAgo(value) {
 
 function releaseEvidence(release) {
   if (!release) return null;
+  if(release.source==="manager-observation") return release.previousRelease
+    ? `city ${release.previousRelease} → ${release.release} · observed ${timeAgo(release.updatedAt)}`
+    : `city ${release.release} · first observed ${timeAgo(release.updatedAt)}`;
   const phase = String(release.phase ?? release.status).replaceAll("-", " ");
   return `release ${release.release} · ${phase} · ${timeAgo(release.updatedAt)}`;
 }
@@ -254,12 +258,18 @@ async function fetchTopology() {
 }
 
 function targetForRelease(release) {
+  if (release.appId === "deploy-manager") return {id:"deploy-manager",name:"Deploy Manager"};
   return (city.routes ?? []).find((route) => route.appId === release.appId || route.id === release.appId) ?? null;
 }
 
 function queueReleaseEvent(release, event, target) {
   releaseUiChain = releaseUiChain
     .then(async () => {
+      if (release.source === "manager-observation") {
+        showPhase("serving",target,"observed");
+        city3d?.observeSelfUpdate?.(release);
+        return;
+      }
       showPhase(event.phase, target, "live");
       await city3d?.handleReleaseEvent?.({
         jobId: release.id,
@@ -288,6 +298,12 @@ function consumeReleaseFeed(nextPayload) {
     const event = current?.events?.at(-1);
     if (current && target && event) {
       queueReleaseEvent(current, event, target);
+    }
+    const observation=releases.find(release=>release.source==="manager-observation");
+    if (!current && observation && Date.now()-Date.parse(observation.updatedAt)<300000) {
+      let seen=false;
+      try {seen=sessionStorage.getItem("city-observation")===observation.id;sessionStorage.setItem("city-observation",observation.id);} catch {}
+      if(!seen)queueReleaseEvent(observation,observation.events.at(-1),targetForRelease(observation));
     }
     return;
   }
@@ -333,12 +349,13 @@ function showPhase(phase, target, source = "demo") {
   window.clearTimeout(toastTimer);
   simulationToast.hidden = false;
   simulationToast.dataset.phase = phase;
-  const copy = phase === "rebuild"
+  const copy = phase === "serving" ? "city release observed healthy"
+    : phase === "rebuild"
     ? `rebuilding ${target.name}`
     : PHASE_COPY[phase] ?? "release moving";
   simulationToast.dataset.source = source;
-  simulationCopy.textContent = `${source === "live" ? "LIVE" : "DEMO"} · ${copy}`;
-  if (["complete", "failed", "rollback", "interrupted"].includes(phase)) {
+  simulationCopy.textContent = `${source === "observed" ? "OBSERVED" : source === "live" ? "LIVE" : "DEMO"} · ${copy}`;
+  if (["serving", "complete", "failed", "rollback", "interrupted"].includes(phase)) {
     toastTimer = window.setTimeout(() => {
       simulationToast.hidden = true;
     }, 2600);
@@ -377,7 +394,17 @@ document.querySelector("#zoom-out").addEventListener("click", () => city3d?.zoom
 document.querySelector("#entity-prev").addEventListener("click", () => selectAdjacent(-1));
 document.querySelector("#entity-next").addEventListener("click", () => selectAdjacent(1));
 window.addEventListener("keydown", (event) => {
+  if(document.querySelector("#build-city-dialog")?.open)return;
   if (event.key === "Escape") city3d?.fit();
+});
+
+const setupDialog=document.querySelector("#build-city-dialog");
+document.querySelector("#close-build-city")?.addEventListener("click",()=>setupDialog.close());
+document.querySelector("#copy-agent-brief")?.addEventListener("click",async()=>{
+  const brief="Help me set up Deploy Manager from https://github.com/YesterdaysLemon/deploy-manager . First read README.md and docs/agent-quickstart.md. Collect my VPS and app requirements, validate a fleet specification, and generate a local staging bundle. Explain the plan and ask for my approval before changing production, credentials, DNS, sudoers, or systemd. Do not treat the public city demo as deployment authorization.";
+  const status=document.querySelector("#agent-copy-status");
+  try {await navigator.clipboard.writeText(brief);status.textContent="Copied. Give this to your agent.";}
+  catch {const field=document.querySelector("#agent-brief-fallback");field.value=brief;field.hidden=false;field.focus();field.select();status.textContent="Select and copy the brief below.";}
 });
 
 function activateSelected() {

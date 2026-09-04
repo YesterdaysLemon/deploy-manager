@@ -130,6 +130,28 @@ files and restarts the prior service.
 
 ## Normal operation
 
+### Observed city-release receipts
+
+Versions with the manager-observation feature append a receipt after a SHA-named
+installed server is listening and its own loopback `/healthz` responds successfully.
+These records use `source: manager-observation`, `phase: serving`, and evidence
+`running-release-local-health`. They are observations of a running release, not
+invented build, activation, or rollback-attempt events.
+
+The first observed SHA establishes a baseline. Restarting that same version does
+not duplicate the receipt; a change of SHA records the previous observed version.
+Returning to an earlier supported version records another observed transition.
+Ordinary local previews do not generate these records, even if a display SHA is
+configured. They persist in the existing journal and never enter the deploy queue.
+
+This does not modify the privileged updater. Failed attempts that never serve,
+or a rollback to code predating the observation feature, remain visible only in
+the updater's own logs. History before the first observation is not backfilled.
+The city gives a recent observation a brief confirmation stamp and keeps its
+receipt available in the manager's selection details.
+
+### Promotion timer
+
 The timer checks after boot and then approximately every 15 minutes with a small
 random delay. A manual check is safe and idempotent:
 

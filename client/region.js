@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { roadStrip, createBoulevard } from "./transport.js";
 import { SIGNAL_JUNCTION } from "./city-traffic.js";
+import { addPortLife, addGulls, warmVillageWindows } from "./city-life.js";
 
 // Decorative places are deliberately separate from the real service plot map.
 // The same plan reserves level ground, places scenery, and routes its vehicles.
@@ -210,7 +211,7 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
   }
   for (const house of plan.houses) {
     box("village-garden", house.x, 0.05, house.z, 3.65, 0.2, 4, 0x9fb278);
-    asset(house.key, house.x, 0.17, house.z, 2.65, 2.7, 2.8, house.rotation);
+    asset(house.key, house.x, 0.17, house.z, 2.65, 2.7, 2.8, house.rotation).then(model=>{if(model)warmVillageWindows(model,city.windowDusk);});
     const towardStreet = Math.sign(harbor.z - house.z);
     path([[house.x, house.z + towardStreet * 1.35], [house.x, harbor.z - towardStreet * 0.86]], 1.2, 0xa6aaa4, 0.16);
     for (const dx of [-1.7, 1.7]) {
@@ -263,16 +264,14 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
     rod(new THREE.Vector3(harbor.x + 0.62, 0.36, z), new THREE.Vector3(harbor.x + 0.62, 0.61, z), 0.07, 0x3a5554);
   }
   asset("industrial/building-p", harbor.x - 2.1, 0.15, harbor.z - 2.7, 2, 2.2, 2.5, Math.PI / 2);
+  const portSign=signFace("PORT 443","#266e64",1.45,.5);portSign.position.set(harbor.x-3.13,1.05,harbor.z-2.7);portSign.rotation.y=-Math.PI/2;
   asset("industrial/container-a", harbor.x - 1.1, 0.37, harbor.z + 2.3, 0.85, 1.6, 0.9);
   asset("industrial/container-b", harbor.x - 2.2, 0.37, harbor.z + 2.2, 0.85, 1.6, 0.9);
   // A compact jib crane with a cable and suspended cargo, not a giant gantry.
   box("crane-base", harbor.x - 0.1, 0.55, harbor.z - 1.8, 0.55, 0.38, 0.55, 0x4e6967);
   rod(new THREE.Vector3(harbor.x - 0.1, 0.7, harbor.z - 1.8), new THREE.Vector3(harbor.x - 0.1, 3.0, harbor.z - 1.8), 0.085, 0xe9b951);
-  rod(new THREE.Vector3(harbor.x - 0.7, 3, harbor.z - 1.8), new THREE.Vector3(harbor.x + 1.5, 3, harbor.z - 1.8), 0.065, 0xe9b951);
-  rod(new THREE.Vector3(harbor.x - 0.1, 2, harbor.z - 1.8), new THREE.Vector3(harbor.x + 1.35, 3, harbor.z - 1.8), 0.04, 0xe9b951);
-  rod(new THREE.Vector3(harbor.x + 1.4, 3, harbor.z - 1.8), new THREE.Vector3(harbor.x + 1.4, 0.95, harbor.z - 1.8), 0.015, 0x3d4f4d);
-  box("hanging-crate", harbor.x + 1.4, 0.87, harbor.z - 1.8, 0.4, 0.4, 0.4, 0xab7947);
-  asset("watercraft/fishing", harbor.x + 2.45, 0.02, harbor.z - 2.35, 0.8, 1.8, 1.1, Math.PI / 2);
+  jobs.push(addPortLife(city,world,harbor,generation));
+  addGulls(city,world,harbor);
   asset("watercraft/sail", harbor.x + 2.3, 0.02, harbor.z + 2.2, 0.85, 1.75, 2.1, Math.PI / 2);
   for (const dz of [-5.4, 5.4]) asset("watercraft/buoy", harbor.x + 5.5, 0.02, harbor.z + dz, 0.38, 0.38, 0.75);
 
@@ -303,6 +302,7 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
     person.add(body, head); world.add(person);
     const walking = curve(index % 2 ? [end, start] : [start, end], y);
     city.motion.push({ object: person, curve: walking, speed: 0.012 + index * 0.001,
+      ...(index%3===0?{stationPassenger:{x:station.x+.43,z:-3+index/3*2}}:{}),
       offset: (index * 0.233) % 1, pingPong: true, bob: 0.01 });
   }
 

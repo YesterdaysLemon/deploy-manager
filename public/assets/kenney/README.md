@@ -45,6 +45,15 @@ The approach roads use the authored broad curve and tight bend. `client/transpor
 
 The boulevard's four corners now use Kenney's actual `road-bend` pieces, with centerline radius matched to their authored connector ports. The cul-de-sac has seven homes in total. The station uses a pedestrian overpass instead of a driveway across the tracks. `client/city-traffic.js` coordinates lane-separated vehicles and the four-faced hovering signal; the near and distant scene still represents ambient activity, not measured VPS network traffic.
 
+`client/city-life.js` gives Port 443 a deterministic boat/crane/parcel/van shift,
+including a doorstep handoff and turning movements. Its working boat stays inshore
+of the through-shipping lane. The passenger timetable includes an eight-second
+boarding dwell; freight uses the same separated cyclic timetable. Six instanced
+gulls and palette-masked warm village windows add atmosphere without extra lights
+or shadow passes. All story actors freeze for reduced motion. These are ambient
+vignettes, independent of deployment receipts. Closed-service barriers and stopped
+factory smoke, unlike the vignettes, follow actual unhealthy probe states.
+
 ## Authored transform audit
 
 The transit pieces retain their source proportions instead of being sized by eye. The road straight and bend each occupy a `1 x 1` authored tile, while the broad curve occupies `2 x 2`; all three use one `2.28` world-unit tile scale. Both bends are authored with west and north connectors. The large rail corner connects its south `(0, 0)` port to its west `(-4, 4)` port and uses the same `1.48` scale as the straight track width. These measured ports are asserted against the procedural traffic curves in `tests/city3d.test.mjs` so a future rotation or recentering change cannot silently reopen seams.

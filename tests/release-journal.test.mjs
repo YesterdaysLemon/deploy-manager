@@ -14,6 +14,30 @@ import {
 const SHA_A = "a".repeat(40);
 const SHA_B = "b".repeat(40);
 
+test("manager observations persist version changes without inventing deployment phases",()=>{
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),"manager-observation-"));
+  const file=path.join(directory,"journal.jsonl");
+  try {
+    let journal=new ReleaseJournal(file);
+    const first=journal.observeManagerRelease(SHA_A);
+    assert.equal(first.job.phase,"serving");assert.equal(first.job.status,"succeeded");
+    assert.deepEqual(first.job.events.map(event=>event.phase),["serving"]);
+    assert.equal(publicReleaseJob(first.job).previousRelease,null);
+    assert.equal(publicReleaseJob(first.job).evidence,"running-release-local-health");
+    journal=new ReleaseJournal(file);
+    assert.equal(journal.observeManagerRelease(SHA_A).duplicate,true);
+    assert.equal(journal.latestSequence,1);
+    const next=journal.observeManagerRelease(SHA_B);
+    assert.equal(publicReleaseJob(next.job).previousRelease,SHA_A.slice(0,7));
+    const returned=journal.observeManagerRelease(SHA_A);
+    assert.equal(returned.duplicate,false);assert.equal(publicReleaseJob(returned.job).previousRelease,SHA_B.slice(0,7));
+    assert.deepEqual(journal.recoverInterrupted(),[]);
+    let runs=0;const coordinator=new ReleaseCoordinator({journal,runner:async()=>{runs++;}});
+    assert.equal(coordinator.active,null);assert.equal(coordinator.queue.length,0);assert.equal(runs,0);
+    assert.throws(()=>journal.observeManagerRelease("d3adb33"),/full SHA/);
+  } finally {fs.rmSync(directory,{recursive:true,force:true});}
+});
+
 async function waitFor(predicate) {
   for (let attempt = 0; attempt < 100; attempt += 1) {
     if (predicate()) return;

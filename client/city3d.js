@@ -8,6 +8,7 @@ import { WorldStream, createContinuations, continuationDistance } from "./world-
 import { createBoulevard, roadStrip, continuousRail } from "./transport.js";
 import { batchStaticScenery } from "./render-batch.js";
 import { advanceCityTraffic, laneCurve, signalPhase, vehiclePose, vehiclesOverlap } from "./city-traffic.js";
+import { healthScenery, railSchedule, updatePortLife, updateGulls } from "./city-life.js";
 export { oceanWaveHeightAt, OCEAN_WAVE_SETTINGS } from "./ocean.js";
 import {
   CONTROL_PLOT_ADDRESSES,
@@ -1335,6 +1336,7 @@ export class City3D {
   }
 
   clearWorld() {
+    this.storyActors=[];this.portLife=null;this.gulls=null;this.stationService=null;this.windowDusk={value:.45};
     this.signalFixtures=[];
     this.activeDelivery=null;
     this.worldStream?.dispose();
@@ -1399,7 +1401,7 @@ export class City3D {
     this.stage.dataset.batchedDrawsSaved = String(batchStaticScenery(this.world, [
       ...this.entityGroups.values(), ...this.motion.map((item) => item.object),
       ...this.trains.flatMap((train) => train.cars), ...this.signalMotion.map((item) => item.object),
-      ...this.smoke.map((item) => item.puff), this.deliveryTruck, this.releasePacket, ...(this.signalFixtures??[]).map(item=>item.group),
+      ...this.smoke.map((item) => item.puff), this.deliveryTruck, this.releasePacket, ...(this.signalFixtures??[]).map(item=>item.group), ...(this.storyActors??[]),
       ...(this.worldStream?.chunks.values() ?? []), ...(this.worldStream?.routes.values() ?? []),
     ]));
     this.stage.dataset.loadedAssets = [...this.loadedAssets].sort().join(",");
@@ -1852,6 +1854,7 @@ export class City3D {
     });
     this.world.add(group);
     this.entityGroups.set(entity.id, group);
+    healthScenery(group);
     if (entity.modelKey.startsWith("industrial/building-e") || entity.modelKey.startsWith("industrial/building-m")) {
       this.addSmoke(group, height);
     }
@@ -1971,7 +1974,12 @@ export class City3D {
     link.target = "_blank";
     link.rel = "noreferrer";
     link.textContent = "BUILD YOUR OWN CITY ↗";
-    link.setAttribute("aria-label", "Build your own city with Deploy Manager on GitHub");
+    link.setAttribute("aria-label", "Build your own city — setup options");
+    link.addEventListener("click",event=>{
+      if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+      const dialog=document.querySelector("#build-city-dialog");
+      if(dialog?.showModal){event.preventDefault();event.stopPropagation();dialog.showModal();}
+    });
     const label = new CSS2DObject(link);
     label.position.set(anchor.cell.x, 5.7, anchor.cell.z);
     this.world.add(label);
@@ -2082,6 +2090,13 @@ export class City3D {
     passenger[2].children[0].rotation.y += Math.PI;
     for (const car of passenger) this.world.add(car);
     this.trains.push({ ...this.trains[this.trains.length - 1], cars: passenger, offset: 0.76 });
+    let stationProgress=0,minimum=Infinity;
+    for(let i=0;i<=1000;i++){
+      const point=this.railCurve.getPointAt(i/1000),distance=Math.hypot(point.x-this.railX,point.z-3);
+      if(distance<minimum){minimum=distance;stationProgress=i/1000;}
+    }
+    this.trains[this.trains.length-2].timetable={stationDistance:stationProgress*trackLength,phase:.56,passenger:false};
+    this.trains[this.trains.length-1].timetable={stationDistance:stationProgress*trackLength,phase:0,passenger:true};
   }
 
   async addWaterTraffic(generation) {
@@ -2193,9 +2208,11 @@ export class City3D {
     for (const [id, group] of this.entityGroups) {
       const status = normalizedStatus(statuses.get(id));
       group.userData.status = status;
+      if(group.userData.healthBarrier)group.userData.healthBarrier.visible=status==="unhealthy";
       group.userData.beacon?.material.color.setHex(statusColor(status));
       if (group.userData.labelElement) group.userData.labelElement.dataset.status = status;
     }
+    this.stage.dataset.closedServices=String([...this.entityGroups.values()].filter(group=>group.userData.healthBarrier?.visible).length);
   }
 
   setLiveDeployments(appIds = []) {
@@ -2205,6 +2222,15 @@ export class City3D {
         || (this.liveAppIds.size > 0 && ["deploy-manager", "docker"].includes(group.userData.entityId));
       group.userData.labelElement?.classList.toggle("is-live", group.userData.live);
     }
+  }
+
+  observeSelfUpdate(receipt) {
+    if(!receipt?.id || receipt.id===this.lastObservedReceipt)return;
+    this.lastObservedReceipt=receipt.id;this.stage.dataset.observedRelease=receipt.release;
+    const group=this.entityGroups.get("deploy-manager");if(!group)return;
+    const stamp=new THREE.Mesh(new THREE.RingGeometry(2.12,2.32,40),new THREE.MeshBasicMaterial({color:0xe3bc63,side:THREE.DoubleSide,transparent:true,opacity:.8}));
+    stamp.name="verified-city-release-stamp";stamp.rotation.x=-Math.PI/2;stamp.position.y=.24;group.add(stamp);
+    setTimeout(()=>{stamp.removeFromParent();stamp.geometry.dispose();stamp.material.dispose();},4000);
   }
 
   select(entityId) {
@@ -2540,6 +2566,10 @@ export class City3D {
     if (this.destroyed) return;
     this.animationFrame = requestAnimationFrame((nextFrameTime) => this.animate(nextFrameTime));
     if (!this.visible) return;
+    if(document.querySelector("#build-city-dialog")?.open) {
+      if(frameTime-(this.lastDialogFrame??0)<250)return;
+      this.lastDialogFrame=frameTime;
+    }
     if(this.worldStream?.pendingCount) {
       this.worldStream.drain(1);
       this.stage.dataset.worldChunks=String(this.worldStream.chunks.size);
@@ -2611,7 +2641,9 @@ export class City3D {
         + (walkingPhase > 1 ? Math.PI : 0);
     }
     for (const train of this.trains) {
-      const headProgress = variableProgress(train, motionElapsed);
+      const service=train.timetable?railSchedule(motionElapsed,train.curve.getLength(),train.timetable.stationDistance,train.timetable.phase):null;
+      const headProgress = service?service.distance/train.curve.getLength():variableProgress(train,motionElapsed);
+      if(train.timetable?.passenger)this.stationService=service;
       train.cars.forEach((car, index) => {
         let progress = headProgress - index * train.carGap;
         progress -= Math.floor(progress);
@@ -2621,6 +2653,18 @@ export class City3D {
         car.rotation.y = Math.atan2(tangent.x, tangent.z);
       });
     }
+    for(const item of this.motion.filter(item=>item.stationPassenger)) {
+      const service=this.stationService,base=item.stationPassenger;
+      const boarding=service?.dwelling?THREE.MathUtils.smoothstep(service.dwellProgress,.12,.8):0;
+      item.object.position.set(THREE.MathUtils.lerp(base.x,this.railX-.35,boarding),THREE.MathUtils.lerp(.53,.68,boarding),base.z);
+      item.object.scale.setScalar(service?.dwelling?1-THREE.MathUtils.smoothstep(service.dwellProgress,.72,.95):Math.min(1,(service?.travelTime??0)/4));
+    }
+    if(this.windowDusk)this.windowDusk.value=this.reducedMotion?.45:.25+.65*(.5-.5*Math.cos(motionElapsed*Math.PI*2/720));
+    updatePortLife(this.portLife,motionElapsed,(x,z,t)=>oceanWaveHeightAt(x,z,t,8,this.perimeter.coast.shoreX));
+    updateGulls(this.gulls,motionElapsed);
+    if(this.portLife && this.stage.dataset.harborPhase!==this.portLife.phase)this.stage.dataset.harborPhase=this.portLife.phase;
+    const stationPhase=this.stationService?.dwelling?"boarding":"travelling";
+    if(this.stage.dataset.stationPhase!==stationPhase)this.stage.dataset.stationPhase=stationPhase;
     for (const item of this.signalMotion) {
       let progress = item.offset + motionElapsed * item.speed;
       progress -= Math.floor(progress);
@@ -2628,11 +2672,12 @@ export class City3D {
       item.object.position.y += 0.08 + Math.sin(motionElapsed * 4 + item.offset * 9) * 0.04;
     }
     for (const item of this.smoke) {
+      item.puff.visible=item.puff.parent?.userData.status!=="unhealthy";
       const cycle = (motionElapsed * 0.16 + item.phase) % 1;
       item.puff.position.y = item.baseY + cycle * 1.35;
       item.puff.position.x = item.baseX + Math.sin(motionElapsed * 0.8 + item.phase * 6) * 0.08;
       item.puff.scale.setScalar(0.72 + cycle * 1.08);
-      item.puff.material.opacity = Math.sin(cycle * Math.PI) * 0.3;
+      item.puff.material.opacity = item.puff.parent?.userData.status==="unhealthy" ? 0 : Math.sin(cycle * Math.PI) * 0.3;
     }
     if (this.selectionMarker.visible) {
       const pulse = this.reducedMotion ? 1 : 1 + Math.sin(elapsed * 3.2) * 0.035;

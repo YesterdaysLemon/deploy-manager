@@ -89,6 +89,16 @@ export class ReleaseJournal {
 
   apply(record) {
     this.sequence = Math.max(this.sequence, record.sequence);
+    if (record.type === "manager-observed") {
+      this.jobs.set(record.jobId, {
+        id: record.jobId, appId: "deploy-manager", sha: record.sha,
+        source: "manager-observation", status: "succeeded", phase: "serving",
+        createdAt: record.at, updatedAt: record.at, sequence: record.sequence,
+        previousSha: record.previousSha ?? null,
+        events: [{sequence:record.sequence,at:record.at,status:"succeeded",phase:"serving"}],
+      });
+      return;
+    }
     if (record.type === "accepted") {
       const job = {
         id: record.jobId,
@@ -136,6 +146,15 @@ export class ReleaseJournal {
     const jobId = this.idFactory();
     this.append({ type: "accepted", jobId, appId, sha, replayKey, source });
     return { duplicate: false, job: this.get(jobId) };
+  }
+
+  observeManagerRelease(sha) {
+    if (!/^[0-9a-f]{40}$/i.test(sha ?? "")) throw new Error("manager observation requires a full SHA");
+    const previous = [...this.jobs.values()].filter(job=>job.source==="manager-observation").sort((a,b)=>b.sequence-a.sequence)[0];
+    if (previous?.sha === sha.toLowerCase()) return {duplicate:true,job:cloneJob(previous)};
+    const jobId=this.idFactory();
+    this.append({type:"manager-observed",jobId,sha:sha.toLowerCase(),previousSha:previous?.sha??null});
+    return {duplicate:false,job:this.get(jobId)};
   }
 
   transition(jobId, { status = "running", phase, error } = {}) {
@@ -192,6 +211,10 @@ export function publicReleaseJob(job, options = {}) {
     release: job.sha.slice(0, 7).toLowerCase(),
     ...(options.includeSha ? { sha: job.sha.toLowerCase() } : {}),
     source: job.source,
+    ...(job.source === "manager-observation" ? {
+      evidence: "running-release-local-health",
+      previousRelease: job.previousSha?.slice(0,7) ?? null,
+    } : {}),
     status: job.status,
     phase: job.phase,
     createdAt: job.createdAt,

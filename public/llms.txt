@@ -36,6 +36,8 @@ License: MIT
 
 Read-only evidence is available at `/api/topology`, `/api/releases`, and `/api/releases/<job-id>`. The public city labels ambient traffic as ambient and reserves its primary release choreography for journaled phase events. “Watch a release” is a demonstration and never mutates production.
 
+Receipts with `source: manager-observation` and `phase: serving` mean a SHA-named manager installation was observed running after its local health check. They are not signed deployment requests or a record of updater build/rollback attempts. The first such receipt establishes a baseline; prior history is not backfilled. Station boarding, harbor deliveries, gulls, and village lighting are ambient scenery, not deployment or network measurements.
+
 ## Agent starting point
 
 Read, in order:
