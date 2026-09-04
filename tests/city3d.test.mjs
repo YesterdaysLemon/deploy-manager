@@ -28,15 +28,133 @@ import {
   createPerimeterBands,
   createPlotLayout,
   createStreetRoutePoints,
+  createStreetAccess,
+  streetCurve,
   createTransitCurves,
+  createTerrainContext,
   oceanWaveHeightAt,
   terrainFbmAt,
   terrainHeightAt,
   vegetationDensityAt,
 } from "../client/city3d.js";
+import { createRegionalPlan, distanceToRegionalSite, advanceLaneTraffic } from "../client/region.js";
+import { OCEAN_WAVES, coastXAt } from "../client/ocean.js";
+import { createContinuations, continuationPoint, continuationDistance, visibleChunkKeys, createSurfaceTile, WorldStream } from "../client/world-stream.js";
+import { createBoulevard, roadStrip, continuousRail, RAIL_SPACING } from "../client/transport.js";
+import { batchStaticScenery } from "../client/render-batch.js";
+import { SIGNAL_JUNCTION, advanceCityTraffic, signalPhase, vehiclePose, vehiclesOverlap, laneCurve } from "../client/city-traffic.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const topology = JSON.parse(readFileSync(new URL("../config/public-topology.json", import.meta.url), "utf8"));
+
+for(const dispatchAt of [10,40,80]) test(`production courier loops deliver without collision or deadlock at phase ${dispatchAt}`,()=>{
+  const layout=createPlotLayout(topology),docker=layout.entities.find(e=>e.id==="docker"),targets=chooseAmbientDeliveryTargets(layout);
+  const access=createStreetAccess(docker,targets[0],layout,"horizontal");
+  const items=targets.map((target,i)=> {
+    const out=createStreetRoutePoints(docker,target,layout,{startAccess:access}),back=createStreetRoutePoints(target,docker,layout,{endAccess:access});
+    return {curve:laneCurve(streetCurve([...out,...back.slice(1)],.255)),speed:1,offset:i/3,bodyWidth:.7,bodyLength:1.5,cruiseSpeed:.85+i*.12};
+  });
+  const loop=createBoulevard(createPerimeterBands(layout).bounds);
+  for(let i=0;i<2;i++)items.push({curve:laneCurve(loop,i?-.42:.42),speed:i?-1:1,offset:i?.64:.14,bodyWidth:.68,bodyLength:1.4,cruiseSpeed:i?1:1.2});
+  advanceCityTraffic(items,0,0);const starts=items.map(item=>item.cityDistance);
+  const releaseAccess=createStreetAccess(docker,layout.entities.find(e=>e.id==="caddy"),layout,"vertical");
+  const delivery={curve:laneCurve(streetCurve(createStreetRoutePoints(docker,targets[0],layout,{startAccess:releaseAccess}),.31)),once:true,cityDistance:0,offset:0,speed:1,bodyWidth:.7,bodyLength:1.5,cruiseSpeed:2};
+  let dispatched=false,completed=false,completedAt=Infinity;
+  for(let frame=0;frame<15000;frame++) {
+    const time=frame/60;
+    if(!dispatched && time>dispatchAt && items.every(item=>!vehiclesOverlap(vehiclePose(delivery,0),vehiclePose(item,item.cityDistance)))) {items.push(delivery);dispatched=true;}
+    advanceCityTraffic(items,1/60,time);
+    for(let i=0;i<items.length;i++)for(let j=i+1;j<items.length;j++)assert.equal(vehiclesOverlap(vehiclePose(items[i],items[i].cityDistance),vehiclePose(items[j],items[j].cityDistance),0),false);
+    if(dispatched && !completed && delivery.cityDistance>delivery.curve.getLength()-.02){completed=true;completedAt=time;items.splice(items.indexOf(delivery),1);}
+  }
+  assert.ok(completed,`delivery deadlocked at ${delivery.cityDistance}/${delivery.curve.getLength()}: ${JSON.stringify(items.map(item=>({distance:item.cityDistance,pose:vehiclePose(item,item.cityDistance),reverse:item.reverseRemaining,blocked:item.blockedSeconds})))}`);
+  assert.ok(completedAt<dispatchAt+90,`delivery took ${completedAt-dispatchAt}s`);
+  items.forEach((item,i)=>assert.ok(Math.abs(item.cityDistance-starts[i])>20,`courier ${i} stalled`));
+});
+
+test("city signals have amber and all-red clearance; crossing traffic progresses without overlaps",()=>{
+  for(let t=0;t<36;t+=.1) {const p=signalPhase(t);assert.ok(!(p.x==="green"&&p.z==="green"));}
+  assert.deepEqual(signalPhase(8.5),{x:"red",z:"red"});assert.equal(signalPhase(7).x,"amber");
+  const {x,z}=SIGNAL_JUNCTION;
+  const items=[
+    {curve:new THREE.LineCurve3(new THREE.Vector3(x-8,.2,z+.42),new THREE.Vector3(x+8,.2,z+.42)),speed:1},
+    {curve:new THREE.LineCurve3(new THREE.Vector3(x-8,.2,z-.42),new THREE.Vector3(x+8,.2,z-.42)),speed:-1},
+    {curve:new THREE.LineCurve3(new THREE.Vector3(x+.42,.2,z-8),new THREE.Vector3(x+.42,.2,z+8)),speed:1},
+    {curve:new THREE.LineCurve3(new THREE.Vector3(x-.42,.2,z-8),new THREE.Vector3(x-.42,.2,z+8)),speed:-1},
+  ].map((item,i)=>({...item,offset:i*.22,cruiseSpeed:1.1,bodyWidth:.7,bodyLength:1.5}));
+  advanceCityTraffic(items,0,0);const starts=items.map(item=>item.cityDistance);
+  for(let frame=0;frame<7200;frame++) {
+    advanceCityTraffic(items,1/60,frame/60);
+    for(let i=0;i<items.length;i++)for(let j=i+1;j<items.length;j++)assert.equal(vehiclesOverlap(vehiclePose(items[i],items[i].cityDistance),vehiclePose(items[j],items[j].cityDistance),0),false);
+  }
+  items.forEach((item,i)=>assert.ok(Math.abs(item.cityDistance-starts[i])>30,"traffic deadlocked"));
+});
+
+test("deferred streaming builds at most one chunk per drain and culls outside the view",()=>{
+  const p=createPerimeterBands(createPlotLayout(topology)),t=createTransitCurves(p);
+  const source=new THREE.Mesh(new THREE.BoxGeometry(),new THREE.MeshBasicMaterial());
+  const stream=new WorldStream({world:new THREE.Group(),waterMaterial:new THREE.MeshBasicMaterial(),roadModel:source,treeModel:source,
+    context:createTerrainContext(p,t.highway,t.rail,t.coastline),heightAt:()=>0,colorAt:()=>new THREE.Color(),siteDistance:()=>20});
+  const camera=new THREE.OrthographicCamera(-20,20,15,-15,.1,200);camera.position.set(0,30,30);camera.lookAt(0,0,0);camera.updateMatrixWorld();
+  const frustum=new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse));
+  stream.update({x:0,z:0},100,{frustum,deferred:true});
+  assert.equal(stream.chunks.size,0);assert.ok(stream.pendingCount>0);assert.ok(stream.pending.length<visibleChunkKeys({x:0,z:0},100).length/2);
+  stream.drain(1);assert.equal(stream.chunks.size,1);stream.dispose();assert.equal(stream.pendingCount,0);
+  source.geometry.dispose();source.material.dispose();
+});
+
+test("regional reservations keep homes, access roads, and docks clear of terrain and shipping", () => {
+  for (const size of [4, 6, 8]) {
+    const perimeter = createPerimeterBands({ size });
+    const transit = createTransitCurves(perimeter);
+    const plan = createRegionalPlan(perimeter, transit.coastline);
+    const context = createTerrainContext(perimeter, transit.highway, transit.rail, transit.coastline);
+    for (const house of plan.houses) {
+      assert.equal(terrainHeightAt(house.x, house.z, context), TERRAIN_CONFIG.baseY);
+      assert.ok(distanceToRegionalSite(house.x, house.z, plan) < 0);
+      assert.ok(house.z - 2 > perimeter.bounds.maxZ, "scenery must not occupy real service plots");
+      assert.ok(Math.abs(house.x - perimeter.rail.x) > 2.5, "homes must clear the railway");
+    }
+    for (const road of plan.roads) for (let i = 1; i < road.length; i += 1) {
+      for (let sample = 0; sample <= 20; sample += 1) {
+        const x = THREE.MathUtils.lerp(road[i - 1][0], road[i][0], sample / 20);
+        const z = THREE.MathUtils.lerp(road[i - 1][1], road[i][1], sample / 20);
+        assert.ok(terrainHeightAt(x, z, context) < 0.09, "access roads cannot be buried");
+      }
+    }
+    for (const lane of transit.shippingLanes) for (const point of lane.getSpacedPoints(400)) {
+      if (Math.abs(point.z - plan.harbor.z) < 6) {
+        assert.ok(point.x > plan.harbor.x + 5.3, "shipping must clear the full pier and a boat beam");
+      }
+    }
+  }
+});
+
+test("lane traffic preserves clearance in both directions and across its offscreen seam", () => {
+  for (const direction of [-1, 1]) {
+    const curve = new THREE.LineCurve3(new THREE.Vector3(), new THREE.Vector3(0, 0, 100));
+    const cars = [0.03, 0.36, 0.7].map((offset, index) => ({
+      curve, offset, speed: direction, vehicleLength: 2, cruiseSpeed: [8, 1.3, 4][index],
+    }));
+    for (let frame = 0; frame < 6000; frame += 1) {
+      advanceLaneTraffic(cars, frame % 60 ? 1 / 60 : 1);
+      for (let a = 0; a < cars.length; a += 1) for (let b = a + 1; b < cars.length; b += 1) {
+        const gap = Math.abs(cars[a].distance - cars[b].distance);
+        assert.ok(Math.min(gap, 100 - gap) >= 2.55 - 1e-8, "cars collided");
+      }
+    }
+    const before = cars.map(({ distance }) => distance);
+    advanceLaneTraffic(cars, 0);
+    assert.deepEqual(cars.map(({ distance }) => distance), before, "reduced motion must stay still");
+  }
+});
+
+test("every curated scene model is explicitly served by the production server", () => {
+  const source = readFileSync(new URL("../src/server.mjs", import.meta.url), "utf8");
+  for (const asset of Object.values(ASSET_URLS)) {
+    assert.ok(source.includes(`"${asset.replace("/assets/kenney/", "")}"`), `${asset} is not served`);
+  }
+});
 
 test("3D city layout assigns every entity to a distinct square-grid plot", () => {
   const layout = createPlotLayout(topology);
@@ -157,7 +275,8 @@ test("tiled highway, curved rail, and coastline occupy distinct perimeter approa
   assert.equal(HIGHWAY_SIGN_ROTATION, 0);
   const approaches = createTransitCurves(perimeter);
   const highwayCenter = approaches.highway.getPointAt(0.5);
-  assert.ok(Math.abs(sign.x - perimeter.highway.x) < 1e-9);
+  assert.ok(sign.x < -3.5, "gantry must be upstream of the x=0 town junction");
+  assert.ok(sign.x > perimeter.highway.minX + 2, "gantry must clear the approach bend");
   assert.ok(Math.abs(sign.z - perimeter.highway.z) < 1e-9);
   assert.ok(Math.abs(highwayCenter.z - perimeter.highway.z) < 1e-9);
   const highwayStart = approaches.highway.getPoint(0);
@@ -234,7 +353,7 @@ test("tiled highway, curved rail, and coastline occupy distinct perimeter approa
   assert.ok(minimumDistance(approaches.highway, approaches.coastline) > perimeter.highway.width / 2);
 });
 
-test("the clear default view uses continuous protected terrain and Acerola-style ocean fBM", () => {
+test("the clear default view uses continuous protected terrain and an analytic ocean spectrum", () => {
   assert.ok(CAMERA_HOME.position[0] < 0);
   assert.ok(CAMERA_HOME.position[2] < 0);
   const targets = chooseAmbientDeliveryTargets(createPlotLayout(topology));
@@ -254,14 +373,12 @@ test("the clear default view uses continuous protected terrain and Acerola-style
   assert.notEqual(vegetationDensityAt(12.3, -4.7), vegetationDensityAt(31.3, 14.7));
   assert.ok(TERRAIN_CONFIG.segmentsX * TERRAIN_CONFIG.segmentsZ > 9_000);
   assert.equal(TERRAIN_CONFIG.octaves, 6);
-  assert.equal(OCEAN_WAVE_SETTINGS.frequencyBands, 4);
-  assert.equal(OCEAN_WAVE_SETTINGS.frequencyMultiplier, 1.47);
   assert.ok(REDUCED_MOTION_FRAME_MS >= 250);
-  assert.equal(OCEAN_WAVE_SETTINGS.amplitudeMultiplier, 0.67);
+  assert.equal(OCEAN_WAVES.length, OCEAN_WAVE_SETTINGS.fragmentIterations);
   assert.ok(OCEAN_WAVE_SETTINGS.fragmentIterations > OCEAN_WAVE_SETTINGS.vertexIterations);
   assert.notEqual(oceanWaveHeightAt(24, 4, 0), oceanWaveHeightAt(24, 4, 3));
   assert.notEqual(oceanWaveHeightAt(24, 4, 0), oceanWaveHeightAt(28, 4, 0));
-  const source = readFileSync(new URL("../client/city3d.js", import.meta.url), "utf8");
+  const source = ["city3d.js", "ocean.js", "world-stream.js", "transport.js"].map((file) => readFileSync(new URL(`../client/${file}`, import.meta.url), "utf8")).join("\n");
   assert.doesNotMatch(source, /new THREE\.Fog|addFogBanks|FogExp2/);
   assert.doesNotMatch(source, /addHills|landscape-hill/);
   assert.match(source, /analytic-rolling-terrain/);
@@ -269,11 +386,129 @@ test("the clear default view uses continuous protected terrain and Acerola-style
   assert.match(source, /new THREE\.InstancedMesh/);
   assert.match(source, /procedural-boat-wake/);
   assert.match(source, /future-foundation/);
-  assert.match(source, /continuous-procedural-rail/);
+  assert.match(source, /continuous-rail-corridor/);
   assert.match(source, /sampleX = scaledX \* cosine - scaledZ \* sine/);
-  assert.match(source, /samplePoint -= derivative \* amplitude/);
-  assert.match(source, /exp\(1\.24 \* sin\(phase\) - 1\.24\)/);
+  assert.match(source, /amplitude \* k \* cos\(phase\)/);
+  assert.match(source, /pixelWidth \* k/);
+  assert.match(source, /tonemapping_fragment/);
   assert.match(source, /new THREE\.ShaderMaterial/);
+});
+
+test("the boulevard closes outside every plot and leaves transport corridors clear", () => {
+  const p = createPerimeterBands(createPlotLayout(topology)), loop = createBoulevard(p.bounds);
+  assert.ok(loop.getPointAt(0).distanceTo(loop.getPointAt(1)) < 1e-9);
+  assert.ok(loop.getTangentAt(0.00001).dot(loop.getTangentAt(0.99999)) > 0.999);
+  const transit = createTransitCurves(p), context=createTerrainContext(p,transit.highway,transit.rail,transit.coastline);
+  for (const v of loop.getSpacedPoints(400)) {
+    const dx=Math.max(p.bounds.minX-v.x,0,v.x-p.bounds.maxX), dz=Math.max(p.bounds.minZ-v.z,0,v.z-p.bounds.maxZ);
+    assert.ok(Math.hypot(dx,dz) > CITY_METRICS.roadWidth/2, "boulevard clips a lot corner");
+    assert.ok(terrainHeightAt(v.x,v.z,context) < 0.09, "boulevard buried in terrain");
+    assert.ok(v.x+CITY_METRICS.roadWidth/2 < coastXAt(v.z,p.coast.shoreX), "boulevard touches water");
+    assert.ok(Math.abs(v.x-p.rail.x) > (CITY_METRICS.roadWidth+p.rail.width)/2, "boulevard clips rail");
+  }
+});
+
+test("road strips meet at the same cross section without longitudinal end caps", () => {
+  const source = new THREE.Mesh(new THREE.BoxGeometry(1,0.02,1),new THREE.MeshStandardMaterial());
+  const point = d => new THREE.Vector3(d,0.145,Math.sin(d/48)*2);
+  const a=roadStrip(source,d=>point(d),32,2.28), b=roadStrip(source,d=>point(d+32),32,2.28);
+  const edges=(mesh,x)=> {
+    const p=mesh.geometry.getAttribute("position"),out=[];
+    for(let i=0;i<p.count;i++) if(Math.abs(p.getX(i)-x)<0.06) out.push([p.getX(i),p.getY(i),p.getZ(i)]);
+    return out;
+  };
+  for(const v of edges(a,32)) assert.ok(edges(b,32).some(w=>Math.hypot(...v.map((n,i)=>n-w[i]))<0.002), "open road seam");
+  assert.ok(a.geometry.getAttribute("uv"), "authored palette coordinates must survive");
+  a.geometry.dispose();b.geometry.dispose();source.geometry.dispose();source.material.dispose();
+});
+
+test("rail geometry shares profiles and continuous sleeper spacing across chunks", () => {
+  const point=d=>new THREE.Vector3(d,0.24,Math.sin(d/48)*2);
+  const a=continuousRail(point,0,32),b=continuousRail(point,32,64);
+  for(let strip=0;strip<3;strip++) {
+    const ap=a.children[strip].geometry.getAttribute("position"),bp=b.children[strip].geometry.getAttribute("position");
+    for(let side=0;side<2;side++) {
+      const index=ap.count-2+side;
+      assert.ok(Math.hypot(ap.getX(index)-bp.getX(side),ap.getY(index)-bp.getY(side),ap.getZ(index)-bp.getZ(side))<1e-6);
+    }
+  }
+  const ma=new THREE.Matrix4(),mb=new THREE.Matrix4();
+  a.children[3].getMatrixAt(a.children[3].count-1,ma);b.children[3].getMatrixAt(0,mb);
+  assert.ok(Math.abs(mb.elements[12]-ma.elements[12]-RAIL_SPACING)<1e-5);
+  for(const group of[a,b]) group.traverse(n=>{n.geometry?.dispose();n.material?.dispose();if(n.isInstancedMesh)n.dispose();});
+});
+
+test("static batching reduces draws while preserving animated and interactive objects", () => {
+  const root=new THREE.Group(),geometry=new THREE.BoxGeometry(),material=new THREE.MeshStandardMaterial();
+  const meshes=Array.from({length:12},(_,i)=>{const mesh=new THREE.Mesh(geometry,material);mesh.position.x=i*2;root.add(mesh);return mesh;});
+  const moving=new THREE.Group(),truck=new THREE.Mesh(geometry,material);moving.add(truck);root.add(moving);
+  const saved=batchStaticScenery(root,[moving]);
+  assert.equal(saved,11);assert.equal(truck.parent,moving);assert.equal(moving.parent,root);
+  const batch=root.children.find(n=>n.isInstancedMesh);assert.equal(batch.count,12);
+  const matrix=new THREE.Matrix4();batch.getMatrixAt(11,matrix);assert.equal(matrix.elements[12],22);
+  for(const mesh of meshes) assert.equal(mesh.parent,null);
+  geometry.dispose();material.dispose();batch.dispose();
+});
+
+test("endless transport joins tangentially, stays separated, and levels its terrain far away", () => {
+  const p = createPerimeterBands(createPlotLayout(topology)), transit = createTransitCurves(p);
+  const routes = createContinuations(transit), context = createTerrainContext(p, transit.highway, transit.rail, transit.coastline);
+  for (const route of routes) {
+    assert.ok(continuationPoint(route, 0).distanceTo(route.origin) < 1e-9);
+    const tangent = continuationPoint(route, 0.01).sub(route.origin).normalize();
+    assert.ok(tangent.dot(route.direction) > 0.99999);
+    for (const d of [32, 64, 1000, 10000]) {
+      const point = continuationPoint(route, d);
+      assert.ok(continuationDistance(point.x, point.z, routes) < 0.01);
+      assert.ok(terrainHeightAt(point.x, point.z, context) < 0.10);
+      assert.ok(point.x < coastXAt(point.z, p.coast.shoreX) - 1.15);
+    }
+  }
+  for (const kind of ["rail", "highway"]) {
+    const pair = routes.filter((route) => route.kind === kind);
+    for (let d = 0; d < 2000; d += 8) assert.ok(continuationPoint(pair[0], d).distanceTo(continuationPoint(pair[1], d)) > 20);
+  }
+});
+
+test("streaming reclaims chunks and preserves shared asset geometry", () => {
+  const p = createPerimeterBands(createPlotLayout(topology)), transit = createTransitCurves(p);
+  const geometry = new THREE.BoxGeometry(1, 0.02, 1), material = new THREE.MeshBasicMaterial();
+  let sourceDisposals = 0; geometry.addEventListener("dispose", () => sourceDisposals++);
+  const source = new THREE.Mesh(geometry, material), world = new THREE.Group();
+  const water = new THREE.MeshBasicMaterial();
+  const stream = new WorldStream({ world, waterMaterial: water, roadModel: source, trackModel: source, treeModel: source,
+    context: createTerrainContext(p, transit.highway, transit.rail, transit.coastline),
+    heightAt: () => 0, colorAt: () => new THREE.Color(0x889977), siteDistance: () => 10 });
+  stream.update({ x: 0, z: 0 }, 40);
+  const first = [...stream.chunks.values()];
+  for (const location of [100, 1000, 10000, -5000]) {
+    stream.update({ x: location, z: location }, 40);
+    assert.ok(stream.chunks.size <= 16);
+    assert.equal(stream.chunks.size, visibleChunkKeys({ x: location, z: location }, 40).length);
+  }
+  for (const group of first) assert.equal(group.parent, null);
+  stream.dispose(); assert.equal(world.children.length, 0); assert.equal(sourceDisposals, 0);
+  geometry.dispose(); material.dispose(); water.dispose();
+});
+
+test("terrain tiles meet without height or normal seams and shoreline waves taper to zero", () => {
+  const spec = { shoreX: 17, heightAt: (x, z) => Math.sin(x / 7) + Math.cos(z / 9), colorAt: () => new THREE.Color(0x889977) };
+  const left = createSurfaceTile(-2, 0, false, spec), right = createSurfaceTile(-1, 0, false, spec);
+  for (let row = 0; row <= 24; row++) {
+    for (const name of ["position", "normal"]) {
+      const a = left.getAttribute(name), b = right.getAttribute(name), ai = row * 25 + 24, bi = row * 25;
+      assert.ok(Math.abs(a.getX(ai) - b.getX(bi)) < 1e-6);
+      assert.ok(Math.abs(a.getY(ai) - b.getY(bi)) < 1e-6);
+      assert.ok(Math.abs(a.getZ(ai) - b.getZ(bi)) < 1e-6);
+    }
+  }
+  for (const t of [0, 1, 14, 120]) {
+    assert.equal(oceanWaveHeightAt(coastXAt(11, 17), 11, t, 8, 17), 0);
+    let expected = 0;
+    for (const w of OCEAN_WAVES.slice(0, 8)) expected += w.amplitude * Math.sin((24 * w.dx + 11 * w.dz) * w.k - t * w.omega + w.phase);
+    assert.ok(Math.abs(oceanWaveHeightAt(24, 11, t, 8, 17) - expected) < 1e-12);
+  }
+  left.dispose(); right.dispose();
 });
 
 test("ambient traffic has directional lanes and independent speed profiles", () => {

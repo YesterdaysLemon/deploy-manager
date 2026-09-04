@@ -2,6 +2,13 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
+import { createRegionalPlan, distanceToRegionalSite, buildRegionalScenery, advanceLaneTraffic } from "./region.js";
+import { coastXAt, createCoastalWaterMaterial, oceanWaveHeightAt, OCEAN_WAVE_SETTINGS } from "./ocean.js";
+import { WorldStream, createContinuations, continuationDistance } from "./world-stream.js";
+import { createBoulevard, roadStrip, continuousRail } from "./transport.js";
+import { batchStaticScenery } from "./render-batch.js";
+import { advanceCityTraffic, laneCurve, signalPhase, vehiclePose, vehiclesOverlap } from "./city-traffic.js";
+export { oceanWaveHeightAt, OCEAN_WAVE_SETTINGS } from "./ocean.js";
 import {
   CONTROL_PLOT_ADDRESSES,
   normalizePlotAddress,
@@ -32,8 +39,8 @@ const COLORS = Object.freeze({
   waterShallow: 0x62b7b0,
   waterDeep: 0x235f70,
   waterFoam: 0xeef0d8,
-  hillLight: 0xaeb584,
-  hillDark: 0x87956f,
+  hillLight: 0x91ae78,
+  hillDark: 0x557d63,
   healthy: 0x2f9b74,
   checking: 0xd3a52e,
   unhealthy: 0xc34d35,
@@ -59,6 +66,10 @@ export const ASSET_URLS = Object.freeze({
   "suburban/building-n": "/assets/kenney/suburban/building-type-n.glb",
   "suburban/building-r": "/assets/kenney/suburban/building-type-r.glb",
   "suburban/tree": "/assets/kenney/suburban/tree-large.glb",
+  "suburban/tree-small": "/assets/kenney/suburban/tree-small.glb",
+  "suburban/building-b": "/assets/kenney/suburban/building-type-b.glb",
+  "suburban/building-d": "/assets/kenney/suburban/building-type-d.glb",
+  "suburban/building-e": "/assets/kenney/suburban/building-type-e.glb",
   "roads/bend": "/assets/kenney/roads/road-bend.glb",
   "roads/curve": "/assets/kenney/roads/road-curve.glb",
   "roads/straight": "/assets/kenney/roads/road-straight.glb",
@@ -72,10 +83,17 @@ export const ASSET_URLS = Object.freeze({
   "trains/track": "/assets/kenney/trains/railroad-straight.glb",
   "trains/track-corner": "/assets/kenney/trains/railroad-corner-large.glb",
   "trains/engine": "/assets/kenney/trains/train-diesel-a.glb",
+  "trains/passenger-a": "/assets/kenney/trains/train-electric-city-a.glb",
+  "trains/passenger-b": "/assets/kenney/trains/train-electric-city-b.glb",
+  "trains/passenger-c": "/assets/kenney/trains/train-electric-city-c.glb",
   "trains/carriage": "/assets/kenney/trains/train-carriage-container-blue.glb",
   "trains/carriage-coal": "/assets/kenney/trains/train-carriage-coal.glb",
   "watercraft/tug": "/assets/kenney/watercraft/boat-tug-a.glb",
   "watercraft/cargo": "/assets/kenney/watercraft/ship-cargo-a.glb",
+  "watercraft/sail": "/assets/kenney/watercraft/boat-sail-a.glb",
+  "watercraft/fishing": "/assets/kenney/watercraft/boat-fishing-small.glb",
+  "watercraft/speed": "/assets/kenney/watercraft/boat-speed-a.glb",
+  "watercraft/buoy": "/assets/kenney/watercraft/buoy.glb",
 });
 
 export const CITY_METRICS = Object.freeze({
@@ -108,36 +126,27 @@ export const ROAD_ASSET_METRICS = Object.freeze({
 export const HIGHWAY_APPROACH = Object.freeze({
   leftTurn: ROAD_ASSET_METRICS.curveRadius * ROAD_ASSET_METRICS.tileScale,
   rightTurn: ROAD_ASSET_METRICS.bendRadius * ROAD_ASSET_METRICS.tileScale,
-  leg: 22,
+  leg: 48,
   curveFit: ROAD_ASSET_METRICS.curveExtent * ROAD_ASSET_METRICS.tileScale,
   bendFit: ROAD_ASSET_METRICS.bendExtent * ROAD_ASSET_METRICS.tileScale,
 });
 export const RAIL_APPROACH = Object.freeze({
   assetScale: 1.48,
   turn: 4 * 1.48,
-  leg: 22,
+  leg: 48,
   cornerFit: 4.48727 * 1.48,
 });
 export const TERRAIN_CONFIG = Object.freeze({
   baseY: -0.075,
-  segmentsX: 124,
-  segmentsZ: 116,
+  segmentsX: 164,
+  segmentsZ: 152,
   octaves: 6,
   baseFrequency: 0.052,
   lacunarity: 2.03,
   persistence: 0.51,
-  heightScale: 2.35,
-  treeCount: 30,
-  grassCount: 760,
-});
-export const OCEAN_WAVE_SETTINGS = Object.freeze({
-  vertexIterations: 8,
-  fragmentIterations: 14,
-  frequencyBands: 4,
-  frequencyMultiplier: 1.47,
-  amplitudeMultiplier: 0.67,
-  speedMultiplier: 1.11,
-  domainDrag: 0.32,
+  heightScale: 4.8,
+  treeCount: 170,
+  grassCount: 2600,
 });
 export const CAMERA_HOME = Object.freeze({
   position: Object.freeze([-31, 28, -31]),
@@ -297,11 +306,11 @@ export function createPerimeterBands(layout) {
   };
   const highwayWidth = 2.28;
   const railWidth = 1.48;
-  const highwayZ = bounds.minZ - 3.05;
+  const highwayZ = bounds.minZ - 4.4;
   const railX = bounds.minX - 3.05;
   const sideStartZ = highwayZ + 4.4;
   const sideEndZ = bounds.maxZ + 5.2;
-  const shoreX = bounds.maxX + 2.35;
+  const shoreX = bounds.maxX + 3.35;
   // The sea is a world boundary, not a decorative canal. It extends far
   // beyond the camera so its outside edge disappears under the screen haze.
   const oceanX = shoreX + 50;
@@ -381,7 +390,7 @@ export function chooseAmbientDeliveryTargets(layout, count = AMBIENT_DELIVERY_CO
 
 export function createHighwaySignTransform(perimeter) {
   return {
-    x: perimeter.highway.x,
+    x: perimeter.highway.minX + (0 - perimeter.highway.minX) * 0.48,
     z: perimeter.highway.z,
     rotation: HIGHWAY_SIGN_ROTATION,
   };
@@ -490,14 +499,13 @@ export function createTransitCurves(perimeter) {
   railPath.add(railStraights[2]);
 
   const coastline = new THREE.CatmullRomCurve3(
-    Array.from({ length: 13 }, (_, index) => {
-      const progress = index / 12;
-      const broad = Math.sin(progress * Math.PI * 3.7 + 0.42) * 0.72;
-      const coves = Math.sin(progress * Math.PI * 9.2 - 0.8) * 0.38;
+    Array.from({ length: 129 }, (_, index) => {
+      const progress = index / 128;
+      const z = THREE.MathUtils.lerp(coast.minZ, coast.maxZ, progress);
       return new THREE.Vector3(
-        coast.shoreX + broad + coves,
+        coastXAt(z, coast.shoreX),
         0.045,
-        THREE.MathUtils.lerp(coast.minZ, coast.maxZ, progress),
+        z,
       );
     }),
     false,
@@ -545,7 +553,7 @@ export function createTransitCurves(perimeter) {
       },
     ],
     coastline,
-    shippingLanes: [offsetCurve(coastline, -3.2, 96), offsetCurve(coastline, -6.2, 96)],
+    shippingLanes: [offsetCurve(coastline, -7.2, 96), offsetCurve(coastline, -11.2, 96)],
   };
 }
 
@@ -574,7 +582,7 @@ function setEntityMetadata(root, entityId) {
   });
 }
 
-function prepareAsset(root) {
+function prepareAsset(root, key = "") {
   const meshes = [];
   root.traverse((child) => {
     if (child.isMesh) meshes.push(child);
@@ -592,7 +600,7 @@ function prepareAsset(root) {
     });
     if (!Array.isArray(mesh.material)) [mesh.material] = mesh.material;
     if (mesh.material.length === 1) mesh.material = mesh.material[0];
-    if (mesh.geometry?.attributes?.position?.count < 25_000) {
+    if (!key.startsWith("roads/") && !key.startsWith("trains/track") && mesh.geometry?.attributes?.position?.count < 25_000) {
       const edges = new THREE.LineSegments(
         new THREE.EdgesGeometry(mesh.geometry, 32),
         new THREE.LineBasicMaterial({ color: COLORS.ink, transparent: true, opacity: 0.24 }),
@@ -613,6 +621,7 @@ function disposeObject3D(root, { includeShared = false, includeTextures = false 
   const materials = new Set();
   const textures = new Set();
   root?.traverse?.((child) => {
+    if (child.isInstancedMesh) child.dispose();
     child.element?.remove?.();
     if (child.geometry && (includeShared || !child.geometry.userData?.deployManagerSharedAsset)) {
       geometries.add(child.geometry);
@@ -621,8 +630,9 @@ function disposeObject3D(root, { includeShared = false, includeTextures = false 
     for (const material of childMaterials) {
       if (!material || (!includeShared && material.userData?.deployManagerSharedAsset)) continue;
       materials.add(material);
-      if (!includeTextures) continue;
-      for (const value of Object.values(material)) if (value?.isTexture) textures.add(value);
+      for (const value of Object.values(material)) {
+        if (value?.isTexture && (includeTextures || value.userData.cityGenerated)) textures.add(value);
+      }
     }
   });
   for (const geometry of geometries) geometry.dispose();
@@ -630,195 +640,7 @@ function disposeObject3D(root, { includeShared = false, includeTextures = false 
   for (const texture of textures) texture.dispose();
 }
 
-function createCoastalWaterGeometry(coastline, oceanX, samples = 96, depthSegments = 14) {
-  const positions = [];
-  const uvs = [];
-  const indices = [];
-  for (let index = 0; index <= samples; index += 1) {
-    const progress = index / samples;
-    const shore = coastline.getPoint(progress);
-    for (let depthIndex = 0; depthIndex <= depthSegments; depthIndex += 1) {
-      const depth = depthIndex / depthSegments;
-      positions.push(
-        THREE.MathUtils.lerp(shore.x, oceanX, depth),
-        shore.y - depth * 0.035,
-        shore.z,
-      );
-      uvs.push(depth, progress);
-    }
-    if (index < samples) {
-      const rowLength = depthSegments + 1;
-      for (let depthIndex = 0; depthIndex < depthSegments; depthIndex += 1) {
-        const shoreIndex = index * rowLength + depthIndex;
-        const oceanIndex = shoreIndex + 1;
-        const nextShore = shoreIndex + rowLength;
-        const nextOcean = nextShore + 1;
-        indices.push(shoreIndex, oceanIndex, nextShore, oceanIndex, nextOcean, nextShore);
-      }
-    }
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  return geometry;
-}
 
-// A browser-sized approximation of a broad wave spectrum: large swell, middle
-// chop, and fine ripples share world coordinates but never share a texture tile.
-// The final Acerola ocean uses an FFT/JONSWAP spectrum; doing that compute pass
-// here would be disproportionate, so this analytic fBM borrows the important
-// visible properties: many frequency bands, rotated domains, derivative drag,
-// and no repeating UV normal map.
-const ACEROLA_OCEAN_FBM_GLSL = `
-  vec3 oceanFbm(vec2 worldXZ, float time) {
-    float frequency = 0.18;
-    float amplitude = 1.0;
-    float speed = 0.22;
-    float seed = 0.35;
-    float height = 0.0;
-    float amplitudeSum = 0.0;
-    vec2 slope = vec2(0.0);
-    vec2 samplePoint = worldXZ;
-
-    for (int waveIndex = 0; waveIndex < OCEAN_WAVE_COUNT; waveIndex += 1) {
-      vec2 direction = normalize(vec2(cos(seed), sin(seed)));
-      float phase = dot(direction, samplePoint) * frequency + time * speed;
-      float wave = amplitude * exp(1.24 * sin(phase) - 1.24);
-      vec2 derivative = frequency * direction * (1.24 * wave * cos(phase));
-
-      height += wave;
-      slope += derivative;
-      samplePoint -= derivative * amplitude * ${OCEAN_WAVE_SETTINGS.domainDrag.toFixed(2)};
-      amplitudeSum += amplitude;
-      float octave = float(waveIndex);
-      samplePoint = mat2(0.819152, -0.573576, 0.573576, 0.819152) * samplePoint
-        + vec2(2.37 + octave * 0.19, -1.61 + octave * 0.13);
-      frequency *= ${OCEAN_WAVE_SETTINGS.frequencyMultiplier.toFixed(2)} * (0.97 + 0.045 * sin(octave * 1.618));
-      amplitude *= ${OCEAN_WAVE_SETTINGS.amplitudeMultiplier.toFixed(2)} * (0.97 + 0.035 * cos(octave * 1.117));
-      speed *= ${OCEAN_WAVE_SETTINGS.speedMultiplier.toFixed(2)};
-      seed += 2.39996323;
-    }
-
-    return vec3(height / amplitudeSum - 0.42, slope / amplitudeSum);
-  }
-`;
-
-export function oceanWaveHeightAt(x, z, time = 0, iterations = OCEAN_WAVE_SETTINGS.vertexIterations) {
-  let frequency = 0.18;
-  let amplitude = 1;
-  let speed = 0.22;
-  let seed = 0.35;
-  let height = 0;
-  let amplitudeSum = 0;
-  let sampleX = x;
-  let sampleZ = z;
-  for (let waveIndex = 0; waveIndex < iterations; waveIndex += 1) {
-    const directionX = Math.cos(seed);
-    const directionZ = Math.sin(seed);
-    const phase = (directionX * sampleX + directionZ * sampleZ) * frequency + time * speed;
-    const wave = amplitude * Math.exp(1.24 * Math.sin(phase) - 1.24);
-    const derivativeScale = frequency * 1.24 * wave * Math.cos(phase);
-    sampleX -= directionX * derivativeScale * amplitude * OCEAN_WAVE_SETTINGS.domainDrag;
-    sampleZ -= directionZ * derivativeScale * amplitude * OCEAN_WAVE_SETTINGS.domainDrag;
-    height += wave;
-    amplitudeSum += amplitude;
-    const rotatedX = 0.819152 * sampleX - 0.573576 * sampleZ;
-    const rotatedZ = 0.573576 * sampleX + 0.819152 * sampleZ;
-    sampleX = rotatedX + 2.37 + waveIndex * 0.19;
-    sampleZ = rotatedZ - 1.61 + waveIndex * 0.13;
-    frequency *= OCEAN_WAVE_SETTINGS.frequencyMultiplier * (0.97 + 0.045 * Math.sin(waveIndex * 1.618));
-    amplitude *= OCEAN_WAVE_SETTINGS.amplitudeMultiplier * (0.97 + 0.035 * Math.cos(waveIndex * 1.117));
-    speed *= OCEAN_WAVE_SETTINGS.speedMultiplier;
-    seed += 2.39996323;
-  }
-  return (height / Math.max(amplitudeSum, 0.0001) - 0.42) * 0.32;
-}
-
-function createCoastalWaterMaterial() {
-  return new THREE.ShaderMaterial({
-    uniforms: {
-      uTime: { value: 0 },
-      uShallow: { value: new THREE.Color(COLORS.waterShallow) },
-      uDeep: { value: new THREE.Color(COLORS.waterDeep) },
-      uFoam: { value: new THREE.Color(COLORS.waterFoam) },
-      uHaze: { value: new THREE.Color(COLORS.paper) },
-      uSunDirection: { value: new THREE.Vector3(-0.45, 0.82, 0.34).normalize() },
-    },
-    vertexShader: `
-      uniform float uTime;
-      varying vec3 vWorldPosition;
-      varying vec2 vSamplePosition;
-      varying float vDepth;
-      varying float vDomainFog;
-
-      #define OCEAN_WAVE_COUNT ${OCEAN_WAVE_SETTINGS.vertexIterations}
-      ${ACEROLA_OCEAN_FBM_GLSL}
-
-      void main() {
-        vec3 fbm = oceanFbm(position.xz, uTime);
-        float shoreDisplacement = mix(0.28, 1.0, smoothstep(0.0, 0.16, uv.x));
-        vec3 displaced = position;
-        displaced.y += fbm.x * 0.32 * shoreDisplacement;
-        vec4 worldPosition = modelMatrix * vec4(displaced, 1.0);
-        vWorldPosition = worldPosition.xyz;
-        vSamplePosition = position.xz;
-        vDepth = uv.x;
-        vDomainFog = max(
-          smoothstep(0.84, 1.0, uv.x),
-          max(1.0 - smoothstep(0.0, 0.105, uv.y), smoothstep(0.895, 1.0, uv.y))
-        );
-        gl_Position = projectionMatrix * viewMatrix * worldPosition;
-      }
-    `,
-    fragmentShader: `
-      uniform float uTime;
-      uniform vec3 uShallow;
-      uniform vec3 uDeep;
-      uniform vec3 uFoam;
-      uniform vec3 uHaze;
-      uniform vec3 uSunDirection;
-      varying vec3 vWorldPosition;
-      varying vec2 vSamplePosition;
-      varying float vDepth;
-      varying float vDomainFog;
-
-      #define OCEAN_WAVE_COUNT ${OCEAN_WAVE_SETTINGS.fragmentIterations}
-      ${ACEROLA_OCEAN_FBM_GLSL}
-
-      void main() {
-        vec3 fbm = oceanFbm(vSamplePosition, uTime);
-        vec3 normal = normalize(vec3(-fbm.y * 0.88, 1.0, -fbm.z * 0.88));
-        vec3 viewDirection = normalize(cameraPosition - vWorldPosition);
-        vec3 halfDirection = normalize(uSunDirection + viewDirection);
-        float ndotl = max(dot(normal, uSunDirection), 0.0);
-        float diffuse = 0.70 + ndotl * 0.30;
-        float facing = max(dot(normal, viewDirection), 0.0);
-        float fresnel = 0.025 + 0.975 * pow(1.0 - facing, 5.0);
-        float crest = smoothstep(-0.055, 0.26, fbm.x);
-        float current = 0.5
-          + sin(dot(vSamplePosition, vec2(0.071, 0.113)) - uTime * 0.18 + fbm.x * 3.1) * 0.27
-          + sin(dot(vSamplePosition, vec2(-0.193, 0.047)) + uTime * 0.13) * 0.23;
-        float crossedSwell = 0.5
-          + sin(dot(vSamplePosition, vec2(0.127, -0.089)) + uTime * 0.11) * 0.24
-          + sin(dot(vSamplePosition, vec2(-0.053, -0.151)) - uTime * 0.075) * 0.20;
-        float shoreMask = 1.0 - smoothstep(0.012, 0.115, vDepth);
-        float shoreFoam = shoreMask * smoothstep(0.48, 0.76, current + crest * 0.18);
-        float openFoam = smoothstep(0.24, 0.56, fbm.x) * smoothstep(0.14, 0.68, vDepth) * 0.12;
-        float glint = pow(max(dot(normal, halfDirection), 0.0), 92.0) * ndotl * 0.72;
-        vec3 color = mix(uShallow, uDeep, smoothstep(0.02, 0.92, vDepth));
-        color = mix(color, uShallow * 1.15, crest * 0.22 + crossedSwell * 0.055);
-        color *= diffuse;
-        color = mix(color, vec3(0.78, 0.88, 0.84), fresnel * 0.30);
-        color = mix(color, uFoam, clamp(shoreFoam * 0.70 + openFoam + glint, 0.0, 0.88));
-        color = mix(color, uHaze, smoothstep(0.04, 1.0, vDomainFog));
-        gl_FragColor = vec4(color, 1.0);
-      }
-    `,
-    side: THREE.DoubleSide,
-  });
-}
 
 function smoothRange(low, high, value) {
   const amount = THREE.MathUtils.clamp((value - low) / Math.max(0.0001, high - low), 0, 1);
@@ -880,8 +702,18 @@ export function vegetationDensityAt(x, z) {
   return smoothRange(0.34, 0.78, broad * 0.72 + detail * 0.28);
 }
 
+const corridorBoundsCache = new WeakMap();
 function distanceToPolyline(x, z, points = []) {
-  let minimum = Infinity;
+  let bounds = corridorBoundsCache.get(points);
+  if (!bounds) {
+    const xs = points.map(p=>p.x??p[0]), zs = points.map(p=>p.z??p[1]);
+    bounds = {minX:Math.min(...xs),maxX:Math.max(...xs),minZ:Math.min(...zs),maxZ:Math.max(...zs)};
+    corridorBoundsCache.set(points,bounds);
+  }
+  const dx = Math.max(bounds.minX-x,0,x-bounds.maxX), dz = Math.max(bounds.minZ-z,0,z-bounds.maxZ);
+  // Callers only need exact distances inside the eight-unit terrain shoulder.
+  if (dx > 8 || dz > 8) return Math.hypot(dx,dz);
+  let minimumSquared = Infinity;
   for (let index = 1; index < points.length; index += 1) {
     const start = points[index - 1];
     const end = points[index];
@@ -895,9 +727,10 @@ function distanceToPolyline(x, z, points = []) {
     const progress = lengthSquared > 0
       ? THREE.MathUtils.clamp(((x - startX) * dx + (z - startZ) * dz) / lengthSquared, 0, 1)
       : 0;
-    minimum = Math.min(minimum, Math.hypot(x - (startX + dx * progress), z - (startZ + dz * progress)));
+    const ex = x - (startX + dx * progress), ez = z - (startZ + dz * progress);
+    minimumSquared = Math.min(minimumSquared, ex * ex + ez * ez);
   }
-  return minimum;
+  return Math.sqrt(minimumSquared);
 }
 
 function distanceToCorridors(x, z, corridors = []) {
@@ -917,18 +750,21 @@ function distanceOutsideCity(x, z, bounds) {
 function shorelineXAt(z, context) {
   const coast = context?.perimeter?.coast ?? context?.coast;
   if (!coast) return Infinity;
-  if (!context?.coastline) return coast.shoreX;
-  const progress = THREE.MathUtils.clamp((z - coast.minZ) / Math.max(0.001, coast.maxZ - coast.minZ), 0, 1);
-  return context.coastline.getPoint(progress).x;
+  return coastXAt(z, coast.shoreX);
 }
 
-function createTerrainContext(perimeter, highwayCurve, railCurve, coastline) {
+export function createTerrainContext(perimeter, highwayCurve, railCurve, coastline) {
+  const regionalPlan = createRegionalPlan(perimeter, coastline);
   return {
     perimeter,
     coastline,
+    regionalPlan,
+    railLength: railCurve.getLength(),
+    continuations: createContinuations({ highway: highwayCurve, rail: railCurve }),
     flatCorridors: [highwayCurve, railCurve]
       .filter(Boolean)
-      .map((curve) => curve.getSpacedPoints(128)),
+      .map((curve) => curve.getSpacedPoints(128))
+      .concat(regionalPlan.roads, [createBoulevard(perimeter.bounds).getSpacedPoints(96)]),
     bounds: {
       minX: perimeter.ground.minX,
       maxX: perimeter.ground.maxX,
@@ -943,104 +779,36 @@ export function terrainHeightAt(x, z, context) {
   if (!perimeter?.bounds || !perimeter?.ground || !perimeter?.coast) return TERRAIN_CONFIG.baseY;
 
   const city = perimeter.bounds;
-  const terrainBounds = context?.perimeter ? context.bounds : perimeter.ground;
   const outsideDistance = distanceOutsideCity(x, z, city);
   const terraceBlend = smoothRange(0.45, 8.6, outsideDistance);
   const shoreDistance = shorelineXAt(z, context?.perimeter ? context : perimeter) - x;
   const coastFade = smoothRange(0.3, 6.4, shoreDistance);
-  const edgeDistance = Math.min(
-    x - terrainBounds.minX,
-    terrainBounds.maxX - x,
-    z - terrainBounds.minZ,
-    terrainBounds.maxZ - z,
-  );
-  // The terrain extends well outside the viewport, so this gentle reduction is
-  // only insurance against a visible vertical skirt during aggressive panning.
-  const edgeFade = 0.58 + smoothRange(0.4, 5.8, edgeDistance) * 0.42;
-  const corridorDistance = distanceToCorridors(x, z, context?.flatCorridors);
+  // No finite-domain flattening: streamed chunks share this global heightfield.
+  const edgeFade = 1;
+  const corridorDistance = Math.min(distanceToCorridors(x, z, context?.flatCorridors), continuationDistance(x, z, context?.continuations));
   const corridorBlend = Number.isFinite(corridorDistance) ? smoothRange(0.9, 6.8, corridorDistance) : 1;
 
   const primary = terrainFbmAt(x, z);
   const secondary = terrainFbmAt(x + 73.4, z - 41.7);
   const normalized = THREE.MathUtils.clamp(primary * 0.72 + secondary * 0.28, -1, 1) * 0.5 + 0.5;
-  const ridge = 1 - Math.abs(secondary);
+  // Domain-warped broad ridges give the whole region valleys and shoulders,
+  // with higher rocky relief away from the engineered city terrace.
+  const warped = terrainFbmAt(x * 0.38 + primary * 4, z * 0.38 + secondary * 4);
+  const ridge = Math.max(0, 1 - Math.abs(warped * 2.6));
   const regionalRise = smoothRange(3.5, 19, outsideDistance);
   const naturalElevation = TERRAIN_CONFIG.heightScale
-    * (0.12 + normalized * 0.58 + ridge * ridge * 0.16 + regionalRise * 0.14)
+    * (0.04 + normalized * 0.3 + ridge ** 2 * regionalRise * 0.75)
     * terraceBlend
     * coastFade
     * edgeFade;
   // Transport corridors sit on a broad civil-engineered shoulder instead of
   // revealing the flattening mask as a narrow procedural trench.
   const corridorShoulder = (0.13 + normalized * 0.035) * terraceBlend * coastFade * edgeFade;
-  const elevation = THREE.MathUtils.lerp(corridorShoulder, naturalElevation, corridorBlend);
+  const siteBlend = smoothRange(0, 3.2, distanceToRegionalSite(x, z, context?.regionalPlan));
+  const elevation = THREE.MathUtils.lerp(corridorShoulder, naturalElevation, corridorBlend) * siteBlend;
   return TERRAIN_CONFIG.baseY + elevation;
 }
 
-function createRollingTerrainGeometry(context) {
-  const bounds = context.bounds;
-  const columns = TERRAIN_CONFIG.segmentsX;
-  const rows = TERRAIN_CONFIG.segmentsZ;
-  const positions = [];
-  const indices = [];
-  const colors = [];
-  const lowColor = new THREE.Color(COLORS.paperDark);
-  const grassColor = new THREE.Color(COLORS.hillLight);
-  const earthColor = new THREE.Color(0x9d8862);
-  const beachColor = new THREE.Color(COLORS.sand);
-  const hazeColor = new THREE.Color(COLORS.paper);
-  for (let row = 0; row <= rows; row += 1) {
-    const progressZ = row / rows;
-    const shore = context.coastline.getPoint(progressZ);
-    for (let column = 0; column <= columns; column += 1) {
-      const progressX = column / columns;
-      const worldX = THREE.MathUtils.lerp(bounds.minX, shore.x, progressX);
-      const worldZ = shore.z;
-      const height = terrainHeightAt(worldX, worldZ, context);
-      positions.push(worldX, height, worldZ);
-
-      const sampleRadius = 0.34;
-      const slopeX = terrainHeightAt(worldX + sampleRadius, worldZ, context)
-        - terrainHeightAt(worldX - sampleRadius, worldZ, context);
-      const slopeZ = terrainHeightAt(worldX, worldZ + sampleRadius, context)
-        - terrainHeightAt(worldX, worldZ - sampleRadius, context);
-      const slope = Math.hypot(slopeX, slopeZ) / (sampleRadius * 2);
-      const outside = distanceOutsideCity(worldX, worldZ, context.perimeter.bounds);
-      const grassBlend = smoothRange(0.75, 4.8, outside);
-      const earthBlend = smoothRange(0.24, 0.86, slope) * 0.72;
-      const beachBlend = 1 - smoothRange(0.15, 2.25, shore.x - worldX);
-      const color = lowColor.clone()
-        .lerp(grassColor, grassBlend)
-        .lerp(earthColor, earthBlend)
-        .lerp(beachColor, beachBlend * 0.88);
-      color.multiplyScalar(0.965 + terrainFbmAt(worldX + 18.2, worldZ - 9.7) * 0.045);
-      const domainEdgeDistance = Math.min(
-        worldX - bounds.minX,
-        worldZ - bounds.minZ,
-        bounds.maxZ - worldZ,
-      );
-      const horizonFog = 1 - smoothRange(0.35, 10.5, domainEdgeDistance);
-      color.lerp(hazeColor, horizonFog);
-      colors.push(color.r, color.g, color.b);
-
-      if (row < rows && column < columns) {
-        const current = row * (columns + 1) + column;
-        const right = current + 1;
-        const next = current + columns + 1;
-        const nextRight = next + 1;
-        indices.push(current, next, right, right, next, nextRight);
-      }
-    }
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-  geometry.computeBoundingBox();
-  geometry.computeBoundingSphere();
-  return geometry;
-}
 
 function fitClone(source, fit = {}) {
   const clone = source.clone(true);
@@ -1185,7 +953,7 @@ export function createStreetRoutePoints(start, end, layout, options = {}) {
   return points.filter((point, index) => index === 0 || !samePoint(point, points[index - 1]));
 }
 
-function streetCurve(points, height = 0.34) {
+export function streetCurve(points, height = 0.34) {
   const vectors = points.map((point) => new THREE.Vector3(point.x, height, point.z));
   if (vectors.length < 2) return null;
   const curve = new THREE.CurvePath();
@@ -1337,6 +1105,8 @@ export class City3D {
     this.signalMotion = [];
     this.smoke = [];
     this.ambientCouriers = [];
+    this.signalFixtures=[];
+    this.activeDelivery=null;
     this.trains = [];
     this.waterMaterial = null;
     this.terrainContext = null;
@@ -1357,7 +1127,7 @@ export class City3D {
       this.lastReducedMotionFrame = -Infinity;
       this.stage.dataset.motion = this.reducedMotion ? "reduced" : "full";
       if (this.renderer) {
-        this.renderer.shadowMap.autoUpdate = !this.reducedMotion;
+        this.renderer.shadowMap.autoUpdate = false;
         this.renderer.shadowMap.needsUpdate = true;
       }
     };
@@ -1374,18 +1144,18 @@ export class City3D {
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(COLORS.paper);
 
-    this.camera = new THREE.OrthographicCamera(-20, 20, 14, -14, 0.1, 180);
+    this.camera = new THREE.OrthographicCamera(-20, 20, 14, -14, 0.1, 1000);
     this.camera.position.set(...CAMERA_HOME.position);
     this.camera.lookAt(0, 0, 0);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, stage.clientWidth < 700 ? 1.25 : 1.5));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 0.94;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    this.renderer.shadowMap.autoUpdate = !this.reducedMotion;
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.needsUpdate = true;
     this.renderer.domElement.className = "city3d-canvas";
     this.renderer.domElement.setAttribute("aria-label", "Interactive 3D map of the Deploy Manager release city");
@@ -1402,6 +1172,7 @@ export class City3D {
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.075;
     this.controls.enablePan = true;
+    this.controls.screenSpacePanning = false;
     this.controls.enableRotate = true;
     this.controls.minPolarAngle = Math.PI * 0.22;
     this.controls.maxPolarAngle = Math.PI * 0.43;
@@ -1535,6 +1306,8 @@ export class City3D {
   resize() {
     const width = Math.max(1, this.stage.clientWidth);
     const height = Math.max(1, this.stage.clientHeight);
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, width < 700 ? 1.25 : 1.5);
+    if (this.renderer.getPixelRatio() !== pixelRatio) this.renderer.setPixelRatio(pixelRatio);
     const aspect = width / height;
     const frustum = this.baseFrustum ?? 39;
     this.camera.left = -(frustum * aspect) / 2;
@@ -1551,7 +1324,7 @@ export class City3D {
     if (!this.assetCache.has(key)) {
       this.assetCache.set(key, this.loader.loadAsync(ASSET_URLS[key]).then((gltf) => {
         this.loadedAssets.add(key);
-        return prepareAsset(gltf.scene);
+        return prepareAsset(gltf.scene, key);
       }));
     }
     return this.assetCache.get(key);
@@ -1562,6 +1335,12 @@ export class City3D {
   }
 
   clearWorld() {
+    this.signalFixtures=[];
+    this.activeDelivery=null;
+    this.worldStream?.dispose();
+    this.worldStream = null;
+    this.lastStreamKey = null;
+    this.waterMaterial?.dispose();
     this.worldGeneration += 1;
     this.scene.remove(this.world);
     disposeObject3D(this.world);
@@ -1609,6 +1388,7 @@ export class City3D {
     this.buildGround(layout);
     this.buildConnections(layout);
     const jobs = [
+      this.buildInfiniteWorld(generation),
       this.buildRoadDetails(layout, generation),
       ...layout.entities.map((entity) => this.addEntity(entity, generation)),
       this.buildAmbientWorld(layout, generation),
@@ -1616,6 +1396,12 @@ export class City3D {
     const results = await Promise.allSettled(jobs);
     if (generation !== this.worldGeneration) return false;
     const failures = results.filter((result) => result.status === "rejected");
+    this.stage.dataset.batchedDrawsSaved = String(batchStaticScenery(this.world, [
+      ...this.entityGroups.values(), ...this.motion.map((item) => item.object),
+      ...this.trains.flatMap((train) => train.cars), ...this.signalMotion.map((item) => item.object),
+      ...this.smoke.map((item) => item.puff), this.deliveryTruck, this.releasePacket, ...(this.signalFixtures??[]).map(item=>item.group),
+      ...(this.worldStream?.chunks.values() ?? []), ...(this.worldStream?.routes.values() ?? []),
+    ]));
     this.stage.dataset.loadedAssets = [...this.loadedAssets].sort().join(",");
     this.renderer.shadowMap.needsUpdate = true;
     if (this.loading) {
@@ -1654,6 +1440,7 @@ export class City3D {
     this.railAssets = this.transitCurves.railAssets;
     this.coastlineCurve = this.transitCurves.coastline;
     this.shippingLanes = this.transitCurves.shippingLanes;
+    this.regionalPlan = createRegionalPlan(this.perimeter, this.coastlineCurve);
 
     this.addTerrain();
 
@@ -1689,19 +1476,8 @@ export class City3D {
       );
     }
 
-    const beachMaterial = new THREE.MeshStandardMaterial({ color: COLORS.sand, roughness: 1 });
-    addRibbon(this.world, this.coastlineCurve, 1.36, beachMaterial, 0.22, 96);
-    this.waterMaterial = createCoastalWaterMaterial();
-    const ocean = new THREE.Mesh(
-      createCoastalWaterGeometry(this.coastlineCurve, this.perimeter.coast.oceanX, 160, 42),
-      this.waterMaterial,
-    );
-    ocean.name = "open-ocean-boundary";
-    ocean.receiveShadow = true;
-    this.world.add(ocean);
+    this.waterMaterial = createCoastalWaterMaterial(this.perimeter.coast.shoreX);
 
-    const railBed = new THREE.MeshStandardMaterial({ color: 0x747063, roughness: 1 });
-    addRibbon(this.world, this.railCurve, this.perimeter.rail.width, railBed, 0.22);
     this.addProceduralRail();
   }
 
@@ -1712,18 +1488,53 @@ export class City3D {
       this.railCurve,
       this.coastlineCurve,
     );
-    const geometry = createRollingTerrainGeometry(this.terrainContext);
-    const material = new THREE.MeshStandardMaterial({
-      vertexColors: true,
-      roughness: 1,
-      metalness: 0,
-    });
-    const terrain = new THREE.Mesh(geometry, material);
-    terrain.name = "analytic-rolling-terrain";
-    terrain.receiveShadow = true;
-    terrain.raycast = () => {};
-    this.world.add(terrain);
     this.addTerrainGrass();
+  }
+
+  async buildInfiniteWorld(generation) {
+    const [roadModel, treeModel] = await Promise.all([
+      this.cloneAsset("roads/straight", { width: 32 / 14, depth: 2.28, exact: true }),
+      this.cloneAsset("suburban/tree", { width: 1.3, depth: 1.3, height: 2.8 }),
+    ]);
+    if (generation !== this.worldGeneration) return;
+    this.worldStream = new WorldStream({
+      world: this.world, waterMaterial: this.waterMaterial, roadModel, treeModel, context: this.terrainContext,
+      heightAt: (x, z) => terrainHeightAt(x, z, this.terrainContext),
+      colorAt: (x, z) => {
+        const shore = shorelineXAt(z, this.terrainContext) - x;
+        const outside = distanceOutsideCity(x, z, this.bounds);
+        const color = new THREE.Color(COLORS.paperDark).lerp(
+          new THREE.Color(COLORS.hillLight).lerp(new THREE.Color(COLORS.hillDark), vegetationDensityAt(x, z) * 0.52),
+          smoothRange(0.75, 4.8, outside),
+        );
+        return color.lerp(new THREE.Color(COLORS.sand), 1 - smoothRange(0.15, 1.7, shore));
+      },
+      siteDistance: (x, z) => Math.min(distanceOutsideCity(x, z, this.bounds),
+        distanceToCorridors(x, z, this.terrainContext.flatCorridors),
+        continuationDistance(x, z, this.terrainContext.continuations)),
+    });
+    this.updateWorldStream();
+    while (this.worldStream?.pendingCount && generation === this.worldGeneration) {
+      await new Promise(resolve=>requestAnimationFrame(resolve));
+    }
+  }
+
+  updateWorldStream() {
+    if (!this.worldStream) return;
+    const halfWidth = (this.camera.right - this.camera.left) / (2 * this.camera.zoom);
+    const halfHeight = (this.camera.top - this.camera.bottom) / (2 * this.camera.zoom);
+    const polar = this.controls.getPolarAngle();
+    const radius = Math.ceil(Math.hypot(halfWidth, halfHeight / Math.cos(polar)) + 20);
+    const key = `${Math.floor(this.controls.target.x / 8)}:${Math.floor(this.controls.target.z / 8)}:${Math.ceil(radius / 8)}:${Math.round(this.controls.getAzimuthalAngle()*16)}`;
+    if (key === this.lastStreamKey) return;
+    this.lastStreamKey = key;
+    this.camera.updateMatrixWorld(true);
+    const frustum=new THREE.Frustum().setFromProjectionMatrix(new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix,this.camera.matrixWorldInverse));
+    this.worldStream.update(this.controls.target, Math.ceil(radius / 8) * 8,{frustum,deferred:true});
+    this.stage.dataset.worldChunks = String(this.worldStream.chunks.size);
+    this.stage.dataset.transportChunks = String(this.worldStream.routes.size);
+    this.stage.dataset.worldCenter = `${Math.round(this.controls.target.x)},${Math.round(this.controls.target.z)}`;
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   addTerrainGrass() {
@@ -1746,7 +1557,7 @@ export class City3D {
     const pale = new THREE.Color(COLORS.hillLight);
     const deep = new THREE.Color(COLORS.hillDark);
     let placed = 0;
-    for (let index = 0; index < 7200 && placed < TERRAIN_CONFIG.grassCount; index += 1) {
+    for (let index = 0; index < 18000 && placed < TERRAIN_CONFIG.grassCount; index += 1) {
       const randomX = ((Math.sin(index * 78.233 + 1.17) * 43758.5453) % 1 + 1) % 1;
       const randomZ = ((Math.sin(index * 39.417 + 7.31) * 24634.6345) % 1 + 1) % 1;
       const shore = context.coastline.getPoint(randomZ);
@@ -1765,6 +1576,8 @@ export class City3D {
       if (
         outside < 3.1
         || corridorDistance < 2.65
+        || continuationDistance(x, z, context.continuations) < 2
+        || distanceToRegionalSite(x, z, this.regionalPlan) < 1.2
         || horizonDistance < 10.8
         || y < TERRAIN_CONFIG.baseY + 0.2
         || densityRoll > 0.18 + density * 0.78
@@ -1786,47 +1599,8 @@ export class City3D {
   }
 
   addProceduralRail() {
-    const railMaterial = new THREE.MeshStandardMaterial({
-      color: 0x343b3d,
-      metalness: 0.42,
-      roughness: 0.48,
-    });
-    for (const side of [-0.43, 0.43]) {
-      const path = offsetCurve(this.railCurve, side, 220);
-      const rail = new THREE.Mesh(
-        new THREE.TubeGeometry(path, 260, 0.055, 6, false),
-        railMaterial,
-      );
-      rail.name = "continuous-procedural-rail";
-      rail.position.y = 0.1;
-      rail.castShadow = true;
-      rail.receiveShadow = true;
-      rail.raycast = () => {};
-      this.world.add(rail);
-    }
-
     const length = this.railCurve.getLength();
-    const count = Math.max(1, Math.floor(length / 0.72));
-    const sleepers = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(1.26, 0.08, 0.16),
-      new THREE.MeshStandardMaterial({ color: 0x8a6547, roughness: 1 }),
-      count,
-    );
-    sleepers.name = "continuous-procedural-sleepers";
-    sleepers.receiveShadow = true;
-    sleepers.raycast = () => {};
-    const transform = new THREE.Object3D();
-    for (let index = 0; index < count; index += 1) {
-      const progress = (index + 0.5) / count;
-      const point = this.railCurve.getPointAt(progress);
-      const tangent = this.railCurve.getTangentAt(Math.min(0.999, progress));
-      transform.position.set(point.x, point.y + 0.055, point.z);
-      transform.rotation.set(0, Math.atan2(tangent.x, tangent.z), 0);
-      transform.updateMatrix();
-      sleepers.setMatrixAt(index, transform.matrix);
-    }
-    sleepers.instanceMatrix.needsUpdate = true;
-    this.world.add(sleepers);
+    this.world.add(continuousRail((distance) => this.railCurve.getPointAt(THREE.MathUtils.clamp(distance / length, 0, 1)), 0, length));
   }
 
   buildConnections(layout) {
@@ -1879,6 +1653,16 @@ export class City3D {
     const { lotSize, roadWidth, pitch } = CITY_METRICS;
     const minCenter = -((layout.size - 1) * pitch) / 2;
     const jobs = [];
+    const roadSource = await this.cloneAsset("roads/straight", { width: 1, depth: 1, exact: true });
+    if (generation !== this.worldGeneration) return;
+    const boulevard = createBoulevard(this.bounds), boulevardLength = boulevard.getLength();
+    for(const line of boulevard.curves.filter(curve=>curve.isLineCurve3)) {
+      const length=line.getLength();this.world.add(roadStrip(roadSource,d=>line.getPointAt(d/length),length,roadWidth));
+    }
+    const {minX,maxX,minZ,maxZ}=this.bounds,o=1.05;
+    for(const [x,z,rotation] of [[maxX+o,minZ-o,0],[maxX+o,maxZ+o,-Math.PI/2],[minX-o,maxZ+o,Math.PI],[minX-o,minZ-o,Math.PI/2]]) {
+      jobs.push(this.placeAsset("roads/bend",{x,z,y:.145,rotation,fit:{scale:roadWidth}},generation));
+    }
     for (let row = 0; row < layout.size - 1; row += 1) {
       const z = minCenter + lotSize / 2 + roadWidth / 2 + row * pitch;
       for (let col = 0; col < layout.size; col += 1) {
@@ -1921,13 +1705,20 @@ export class City3D {
       rotation: highwaySign.rotation,
       fit: { width: 5, depth: 4.5, height: 4.2 },
     }, generation));
-    jobs.push(this.placeAsset("roads/traffic-light", {
-      x: minCenter + lotSize / 2 + roadWidth / 2,
-      y: 0.18,
-      z: minCenter + lotSize / 2 + roadWidth / 2,
-      fit: { width: 0.65, depth: 0.65, height: 2.1 },
-    }, generation));
     jobs.push(this.addHighwayRoadAssets(generation));
+    // Join all twelve former street ends to the circulating outer boulevard.
+    for (let i = 0; i < layout.size - 1; i++) {
+      const coordinate = minCenter + lotSize / 2 + roadWidth / 2 + i * pitch;
+      for (const sign of [-1, 1]) {
+        const boundary = sign * this.bounds.maxX;
+        for (const axis of ["x", "z"]) {
+          const start = axis === "x" ? new THREE.Vector3(boundary,0.15,coordinate) : new THREE.Vector3(coordinate,0.15,boundary);
+          const end = start.clone(); end[axis] += sign * 1.05;
+          const c = new THREE.LineCurve3(start,end); this.world.add(roadStrip(roadSource,(d)=>c.getPointAt(d/1.05),1.05,roadWidth));
+          jobs.push(this.placeAsset("roads/crossroad", { x:end.x,z:end.z,y:0.17,fit:{width:roadWidth,depth:roadWidth,exact:true}},generation));
+        }
+      }
+    }
     await Promise.all(jobs);
   }
 
@@ -1937,7 +1728,7 @@ export class City3D {
       curve,
       {
         crossWidth: this.perimeter.highway.width,
-        maxSegmentLength: 4.35,
+        maxSegmentLength: 2.28,
         y: 0.145,
         localAxis: "x",
       },
@@ -1954,9 +1745,16 @@ export class City3D {
   }
 
   async placeTransitAssetRun(key, curve, options, generation) {
+    if (key === "roads/straight") {
+      const source = await this.cloneAsset(key, { width:1,depth:1,exact:true });
+      if (generation !== this.worldGeneration) return;
+      const length = curve.getLength();
+      this.world.add(roadStrip(source,(d)=> {const p=curve.getPointAt(d/length);p.y=options.y;return p;},length,options.crossWidth));
+      return;
+    }
     const length = curve.getLength();
     const segmentCount = Math.max(1, Math.ceil(length / options.maxSegmentLength));
-    const segmentLength = (length / segmentCount) * 1.025;
+    const segmentLength = length / segmentCount;
     await Promise.all(Array.from({ length: segmentCount }, async (_, index) => {
       const fit = options.localAxis === "x"
         ? { width: segmentLength, depth: options.crossWidth, height: 0.24, exact: true }
@@ -1970,7 +1768,7 @@ export class City3D {
       model.position.copy(point);
       model.position.y = options.y;
       model.rotation.y = options.localAxis === "x"
-        ? Math.atan2(tangent.z, tangent.x)
+        ? -Math.atan2(tangent.z, tangent.x)
         : Math.atan2(tangent.x, tangent.z);
       this.world.add(model);
     }));
@@ -2092,6 +1890,13 @@ export class City3D {
       this.addWaterTraffic(generation),
       this.addDeliveryTruck(generation),
       this.addAmbientDeliveryLoops(generation),
+      buildRegionalScenery(this, generation, {
+        heightAt: (x, z) => terrainHeightAt(x, z, this.terrainContext),
+        siteDistance: (x, z) => Math.min(
+          distanceOutsideCity(x, z, this.bounds),
+          distanceToCorridors(x, z, this.terrainContext.flatCorridors),
+        ),
+      }),
     ]);
   }
 
@@ -2176,12 +1981,13 @@ export class City3D {
     const placements = [];
     const terrain = this.terrainContext;
     if (!terrain) return;
-    for (let index = 0; index < 1400 && placements.length < TERRAIN_CONFIG.treeCount; index += 1) {
+    for (let index = 0; index < 6000 && placements.length < TERRAIN_CONFIG.treeCount; index += 1) {
       const randomX = ((Math.sin(index * 91.731 + 0.43) * 43758.5453) % 1 + 1) % 1;
       const randomZ = ((Math.sin(index * 47.173 + 2.17) * 24634.6345) % 1 + 1) % 1;
       const shore = terrain.coastline.getPoint(randomZ);
-      const x = THREE.MathUtils.lerp(terrain.bounds.minX + 4.2, shore.x - 4.2, randomX);
-      const z = shore.z;
+      // Concentrate the finite tree budget in the explorable near region.
+      const x = THREE.MathUtils.lerp(terrain.perimeter.bounds.minX - 32, shore.x - 3.2, randomX);
+      const z = THREE.MathUtils.lerp(terrain.perimeter.bounds.minZ - 30, terrain.perimeter.bounds.maxZ + 38, randomZ);
       const y = terrainHeightAt(x, z, terrain);
       const density = vegetationDensityAt(x, z);
       const densityRoll = (stableHash(`tree-density:${index}`) % 1000) / 1000;
@@ -2192,18 +1998,20 @@ export class City3D {
       );
       if (
         y < 0.42
-        || distanceOutsideCity(x, z, terrain.perimeter.bounds) < 5.2
-        || distanceToCorridors(x, z, terrain.flatCorridors) < 3.6
+        || distanceOutsideCity(x, z, terrain.perimeter.bounds) < 2.8
+        || distanceToCorridors(x, z, terrain.flatCorridors) < 2.3
+        || continuationDistance(x, z, terrain.continuations) < 3.4
+        || distanceToRegionalSite(x, z, this.regionalPlan) < 1.3
         || horizonDistance < 11.4
-        || densityRoll > density ** 1.35
-        || placements.some((tree) => Math.hypot(tree.x - x, tree.z - z) < 2.35)
+        || densityRoll > 0.2 + density ** 1.15
+        || placements.some((tree) => Math.hypot(tree.x - x, tree.z - z) < 1.15)
       ) continue;
-      placements.push({ x, y, z, height: 1.82 + density * 0.65 + ((index * 37) % 9) * 0.09 });
+      placements.push({ x, y, z, height: 1.9 + density * 1.3 + ((index * 37) % 9) * 0.13 });
     }
     const trees = await Promise.all(placements.map(async (placement, index) => {
-      const tree = await this.cloneAsset("suburban/tree", {
-        width: placement.height * 0.42,
-        depth: placement.height * 0.42,
+      const tree = await this.cloneAsset(index % 3 ? "suburban/tree" : "suburban/tree-small", {
+        width: placement.height * 0.65,
+        depth: placement.height * 0.65,
         height: placement.height,
       });
       tree.name = `terrain-tree:${index + 1}`;
@@ -2239,6 +2047,9 @@ export class City3D {
         speedFrequency: spec.frequency,
         speedPhase: index * 1.37,
         wrap: true,
+        trafficLane: spec.lane,
+        vehicleLength: isTruck ? 2.12 : 1.82,
+        cruiseSpeed: Math.abs(spec.speed) * 80,
       });
     }));
   }
@@ -2258,12 +2069,19 @@ export class City3D {
       cars,
       curve: this.railCurve,
       speed: TRAIN_TRAFFIC_PROFILE.speed,
-      offset: 0.16,
+      offset: 0.36,
       speedVariance: TRAIN_TRAFFIC_PROFILE.variance,
       speedFrequency: TRAIN_TRAFFIC_PROFILE.frequency,
       speedPhase: 0.8,
       carGap: 3.08 / trackLength,
     });
+    const passenger = await Promise.all(["a", "b", "c"].map((part) => this.cloneAsset(
+      `trains/passenger-${part}`, { width: 1.3, depth: 3, height: 1.65 },
+    )));
+    if (generation !== this.worldGeneration) return;
+    passenger[2].children[0].rotation.y += Math.PI;
+    for (const car of passenger) this.world.add(car);
+    this.trains.push({ ...this.trains[this.trains.length - 1], cars: passenger, offset: 0.76 });
   }
 
   async addWaterTraffic(generation) {
@@ -2279,7 +2097,7 @@ export class City3D {
       object: tug,
       curve: this.shippingLanes[0],
       speed: WATER_TRAFFIC_PROFILES[0].speed,
-      offset: 0.22,
+      offset: 0.47,
       rotationOffset: 0,
       speedVariance: WATER_TRAFFIC_PROFILES[0].variance,
       speedFrequency: WATER_TRAFFIC_PROFILES[0].frequency,
@@ -2292,7 +2110,7 @@ export class City3D {
       object: cargo,
       curve: this.shippingLanes[1],
       speed: WATER_TRAFFIC_PROFILES[1].speed,
-      offset: 0.7,
+      offset: 0.56,
       rotationOffset: Math.PI,
       speedVariance: WATER_TRAFFIC_PROFILES[1].variance,
       speedFrequency: WATER_TRAFFIC_PROFILES[1].frequency,
@@ -2304,7 +2122,7 @@ export class City3D {
   }
 
   async addDeliveryTruck(generation) {
-    const truck = await this.cloneAsset("cars/delivery", { width: 1.08, depth: 2.05, height: 1.15 });
+    const truck = await this.cloneAsset("cars/delivery", { width: .7, depth: 1.5, height: .95 });
     if (generation !== this.worldGeneration) return;
     const docker = this.layoutEntities.get("docker");
     const toward = this.layoutEntities.get("caddy") ?? this.layoutEntities.get("deploy-manager");
@@ -2328,15 +2146,15 @@ export class City3D {
 
     await Promise.all(targets.map(async (target, index) => {
       const model = await this.cloneAsset(vehicleKeys[index], {
-        width: index === 1 ? 1.02 : 0.92,
-        depth: index === 1 ? 1.95 : 1.78,
+        width: 0.7,
+        depth: 1.5,
         height: index === 1 ? 1.02 : 0.98,
       });
       if (generation !== this.worldGeneration) return;
       const outward = createStreetRoutePoints(docker, target, this.layout, { startAccess: yardAccess });
       const returning = createStreetRoutePoints(target, docker, this.layout, { endAccess: yardAccess });
       const loopPoints = [...outward, ...returning.slice(1)];
-      const curve = streetCurve(loopPoints, 0.255 + index * 0.012);
+      const curve = laneCurve(streetCurve(loopPoints, 0.255),.42);
       const courier = new THREE.Group();
       courier.name = `ambient-update:${target.id}`;
       courier.add(model);
@@ -2349,6 +2167,7 @@ export class City3D {
       this.world.add(courier);
       this.motion.push({
         object: courier,
+        cityVehicle:true,bodyWidth:.7,bodyLength:1.5,cruiseSpeed:.85+index*.12,
         curve,
         speed: 0.0115 + index * 0.0017,
         offset: index / AMBIENT_DELIVERY_COUNT,
@@ -2470,6 +2289,17 @@ export class City3D {
 
   async moveAlong(object, curve, milliseconds, token) {
     if (!object || !curve) return false;
+    if(object===this.deliveryTruck && !this.reducedMotion) {
+      object.visible=true;
+      const item={object,curve:laneCurve(curve,.42),once:true,cityVehicle:true,cityDistance:0,offset:0,speed:1,bodyWidth:.7,bodyLength:1.5,cruiseSpeed:2};
+      const vehicles=this.motion.filter(other=>other.cityVehicle);
+      while(token===this.simulationGeneration && vehicles.some(other=>other.cityDistance!==undefined && vehiclesOverlap(vehiclePose(item,0),vehiclePose(other,other.cityDistance)))) await new Promise(resolve=>requestAnimationFrame(resolve));
+      if(token!==this.simulationGeneration)return false;
+      this.activeDelivery=item;
+      while(token===this.simulationGeneration && item.cityDistance<item.curve.getLength()-.02) await new Promise(resolve=>requestAnimationFrame(resolve));
+      if(this.activeDelivery===item)this.activeDelivery=null;
+      return token===this.simulationGeneration;
+    }
     object.visible = true;
     return this.tween(milliseconds, token, (progress) => {
       const eased = progress < 0.5 ? 2 * progress * progress : 1 - ((-2 * progress + 2) ** 2) / 2;
@@ -2710,6 +2540,12 @@ export class City3D {
     if (this.destroyed) return;
     this.animationFrame = requestAnimationFrame((nextFrameTime) => this.animate(nextFrameTime));
     if (!this.visible) return;
+    if(this.worldStream?.pendingCount) {
+      this.worldStream.drain(1);
+      this.stage.dataset.worldChunks=String(this.worldStream.chunks.size);
+      this.stage.dataset.streamPending=String(this.worldStream.pendingCount);
+      this.renderer.shadowMap.needsUpdate=true;
+    }
     if (
       this.reducedMotion
       && frameTime - this.lastReducedMotionFrame < REDUCED_MOTION_FRAME_MS
@@ -2718,18 +2554,61 @@ export class City3D {
     const elapsed = (frameTime - this.startedAt) / 1000;
     const motionElapsed = this.reducedMotion ? 0 : elapsed;
     this.controls.update();
-    if (this.waterMaterial) this.waterMaterial.uniforms.uTime.value = motionElapsed;
+    // Orthographic scale is independent of distance. Retreat along the same
+    // view direction so low-angle foreground rays remain in front of near clip.
+    const minimumDistance=(this.camera.top-this.camera.bottom)/(2*this.camera.zoom)*Math.tan(this.controls.getPolarAngle())+30;
+    const cameraOffset=this.camera.position.clone().sub(this.controls.target);
+    if(cameraOffset.length()<minimumDistance) {
+      this.camera.position.copy(this.controls.target).add(cameraOffset.setLength(minimumDistance));
+      this.camera.updateMatrixWorld(true);this.lastStreamKey=null;
+    }
+    if (this.waterMaterial) {
+      this.waterMaterial.uniforms.uTime.value = motionElapsed;
+      this.waterMaterial.uniforms.uViewDirection.value.copy(this.camera.position).sub(this.controls.target).normalize();
+      this.waterMaterial.uniforms.uDetail.value = this.controls.getPolarAngle()>1.12 || this.camera.zoom<0.8 ? 8 : 14;
+    }
+    this.updateWorldStream();
+    const trafficDelta = this.reducedMotion ? 0 : Math.min(0.1, (frameTime - (this.lastTrafficFrame ?? frameTime)) / 1000);
+    this.lastTrafficFrame = frameTime;
+    for (const lane of [-0.5, 0.5]) advanceLaneTraffic(this.motion.filter((item) => item.trafficLane === lane), trafficDelta);
+    const cityVehicles=this.motion.filter(item=>item.cityVehicle);
+    if(this.activeDelivery)cityVehicles.push(this.activeDelivery);
+    advanceCityTraffic(cityVehicles,trafficDelta,motionElapsed);
+    if(frameTime-(this.lastTrafficAudit??0)>1000) {
+      let conflicts=0;
+      for(let i=0;i<cityVehicles.length;i++)for(let j=i+1;j<cityVehicles.length;j++) {
+        if(vehiclesOverlap(vehiclePose(cityVehicles[i],cityVehicles[i].cityDistance),vehiclePose(cityVehicles[j],cityVehicles[j].cityDistance),0))conflicts++;
+      }
+      this.stage.dataset.trafficConflicts=String(conflicts);
+      this.stage.dataset.trafficWaiting=String(cityVehicles.filter(item=>item.waiting).length);
+      this.lastTrafficAudit=frameTime;
+    }
+    for(const fixture of this.signalFixtures??[]) {
+      const phase=signalPhase(motionElapsed);
+      fixture.group.position.y=2.85+(this.reducedMotion?0:Math.sin(motionElapsed*1.2)*.045);
+      for(const lamp of fixture.lamps) {
+        const lit=phase[lamp.axis]===lamp.color;lamp.mesh.material.color.setHex(lit?lamp.hex:0x263c38);
+      }
+    }
 
-    for (const item of this.motion) {
-      const progress = variableProgress(item, motionElapsed);
+    for (const item of [...this.motion,...(this.activeDelivery?[this.activeDelivery]:[])]) {
+      if(item.cityVehicle && item.cityDistance===undefined) {item.object.visible=false;continue;}
+      if(item.cityVehicle)item.object.visible=true;
+      const walkingPhase = item.pingPong ? (item.offset + motionElapsed * item.speed) % 2 : null;
+      const progress = item.cityVehicle ? (item.once ? Math.min(.999999,item.cityDistance/item.curve.getLength()) : ((item.cityDistance/item.curve.getLength())%1+1)%1)
+        : walkingPhase !== null ? (walkingPhase <= 1 ? walkingPhase : 2 - walkingPhase)
+        : item.trafficLane !== undefined
+        ? (item.distance ?? item.offset * item.curve.getLength()) / item.curve.getLength()
+        : variableProgress(item, motionElapsed);
       const point = item.curve.getPointAt(progress);
       const tangent = item.curve.getTangentAt(Math.min(0.999, progress));
       item.object.position.copy(point);
       if (item.surface === "ocean") {
-        item.object.position.y += oceanWaveHeightAt(point.x, point.z, motionElapsed);
+        item.object.position.y += oceanWaveHeightAt(point.x, point.z, motionElapsed, 8, this.perimeter.coast.shoreX);
       }
       if (item.bob) item.object.position.y += Math.sin(motionElapsed * 2.1 + item.offset * 8) * item.bob;
-      item.object.rotation.y = Math.atan2(tangent.x, tangent.z) + (item.rotationOffset ?? 0);
+      item.object.rotation.y = Math.atan2(tangent.x, tangent.z) + (item.rotationOffset ?? 0)
+        + (walkingPhase > 1 ? Math.PI : 0);
     }
     for (const train of this.trains) {
       const headProgress = variableProgress(train, motionElapsed);
@@ -2767,8 +2646,13 @@ export class City3D {
         : group.userData.live ? 1.2 + Math.sin(elapsed * 6) * 0.36 : 1 + Math.sin(elapsed * 2.4 + group.position.x) * 0.08;
       group.userData.beacon.scale.setScalar(pulse);
     }
+    if (!this.reducedMotion && frameTime - (this.lastShadowFrame ?? 0) >= 50) {
+      this.renderer.shadowMap.needsUpdate = true; this.lastShadowFrame = frameTime;
+    }
     this.renderer.render(this.scene, this.camera);
-    this.labelRenderer.render(this.scene, this.camera);
+    if (this.reducedMotion || frameTime - (this.lastLabelFrame ?? 0) >= 33) {
+      this.labelRenderer.render(this.scene, this.camera); this.lastLabelFrame = frameTime;
+    }
   }
 
   destroy() {

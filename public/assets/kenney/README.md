@@ -28,12 +28,22 @@ This keeps the visualizer quick to load and makes upgrades auditable.
 | Industrial | `building-c`, `building-e`, `building-m`, `building-p`, `detail-tank-large`, `shipping-container-a`, `shipping-container-b` |
 | Commercial | `building-a`, `building-f`, `building-j`, `building-k`, `building-n`, `building-skyscraper-e` |
 | Roads | `road-straight`, `road-crossroad`, `road-curve`, `road-bend`, `sign-highway`, `traffic-light-object-vertical` |
-| Suburban | `building-type-a`, `building-type-h`, `building-type-n`, `building-type-r`, `tree-large` |
+| Suburban | `building-type-a`, `building-type-b`, `building-type-d`, `building-type-e`, `building-type-h`, `building-type-n`, `building-type-r`, `tree-large`, `tree-small` |
 | Cars | `delivery`, `sedan`, `taxi`, `truck` |
-| Trains | `railroad-straight`, `railroad-corner-large`, `train-diesel-a`, `train-carriage-container-blue`, `train-carriage-coal` |
-| Watercraft | `boat-tug-a`, `ship-cargo-a` |
+| Trains | `railroad-straight`, `railroad-corner-large`, `train-diesel-a`, `train-carriage-container-blue`, `train-carriage-coal`, `train-electric-city-a`, `train-electric-city-b`, `train-electric-city-c` |
+| Watercraft | `boat-tug-a`, `ship-cargo-a`, `boat-sail-a`, `boat-fishing-small`, `boat-speed-a`, `buoy` |
 
-The approach roads use the authored broad curve and tight bend instead of a generated road surface. The railway uses a continuous raised procedural bed and rails so its long off-map bends cannot open visible seams; its moving consist uses Kenney's engine, container carriage, and coal carriage. The straight and large-corner track models remain as measured reference fixtures. To refresh the set, update both `client/city3d.js` and the explicit static-asset list in `src/server.mjs`.
+The coastal region adds a decorative village, single-sided station platform, timber piers, quay, crane, lighthouse, and pedestrians. These are ambient scenery, not additional services or release events. `client/region.js` shares its road and building reservations with the terrain generator so gardens, transport corridors, and port surfaces remain level. Freight and passenger consists share one timetable with separated phases; road vehicles follow their lane's leader rather than passing through slower cars. Working shipping lanes remain seaward of the marina fingers. Rocks and highway posts use instanced geometry.
+
+The approach roads use the authored broad curve and tight bend. `client/transport.js` bends the supplied straight-road triangles into continuous strips, preserving palette UVs while removing end caps and tile outlines. Suburban streets use the same geometry. A rounded outer boulevard joins the city's former dead ends; two ambient cars circulate on it. The suburban lane ends in a cul-de-sac, with short car-width driveways. The station is outside the rail corridor to leave space for the boulevard. Near and distant railways share the same continuous steel/ballast cross section and globally spaced sleepers; the supplied straight and corner rail pieces remain measured reference assets. A bespoke T-junction, stop sign, and urban signal heads connect the highway to town; the gantry sits upstream.
+
+`client/world-stream.js` generates and unloads 32-unit terrain/sea sections around the camera, and extends the four transport ends along deterministic, gently bending corridors. Panning stays on the ground plane. Chunk geometry is owned and disposed separately from shared Kenney geometry and materials. Decorations remain local to the near-city region or deterministic streamed woodland; the traffic simulation is still ambient, not a traffic measurement.
+
+`client/ocean.js` defines one directional wave spectrum for GPU shading/displacement and CPU boat heights. Normals come from wave derivatives, with pixel-footprint filtering, shoreline attenuation, depth absorption, Fresnel reflection, and localized breaking wash. Sparse wind-aligned crest glints replace broad cloudy color patches. This is an analytic approximation, not an FFT or fluid solver. Mathematical reference: [GPU Gems, Effective Water Simulation from Physical Models](https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-1-effective-water-simulation-physical-models).
+
+`client/render-batch.js` instances repeated static geometry and merges compatible props by material. Buildings, release effects, traffic, and individually unloaded chunks are excluded. Shadows update at 20 Hz; labels at approximately 30 Hz; animation and controls retain the display frame cadence. Device pixel ratio is capped at 1.5 on desktop and 1.25 on narrow layouts. See `docs/scene-render-performance.md` for the measured scope.
+
+The boulevard's four corners now use Kenney's actual `road-bend` pieces, with centerline radius matched to their authored connector ports. The cul-de-sac has seven homes in total. The station uses a pedestrian overpass instead of a driveway across the tracks. `client/city-traffic.js` coordinates lane-separated vehicles and the four-faced hovering signal; the near and distant scene still represents ambient activity, not measured VPS network traffic.
 
 ## Authored transform audit
 
