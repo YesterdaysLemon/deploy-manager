@@ -18,6 +18,11 @@ export default defineConfig({
     baseURL: `http://127.0.0.1:${port}`,
     channel: process.platform === "win32" ? "msedge" : undefined,
     headless: true,
+    // GPU-less CI bots need a deterministic graphics backend. Keep normal
+    // local runs on the host GPU and exercise the full scene in both cases.
+    launchOptions: process.env.CI ? {
+      args: ["--use-gl=angle", "--use-angle=swiftshader"],
+    } : undefined,
     reducedMotion: "reduce",
     trace: "retain-on-failure",
   },
