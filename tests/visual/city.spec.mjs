@@ -15,15 +15,17 @@ async function openCity(page, viewport) {
 
 test("desktop city keeps its visual contract", async ({ page }) => {
   await openCity(page, { width: 1280, height: 900 });
-  await expect(page.locator("body")).toHaveScreenshot(
+  // This is a fixed, viewport-sized scene. A page capture avoids the element
+  // screenshot's scroll/stability handshake on software-rendered CI browsers.
+  await expect(page).toHaveScreenshot(
     "release-city-desktop.png",
-    { timeout: 30_000 },
+    { fullPage: false, timeout: 30_000 },
   );
 });
 
 test("mobile city stays focused and usable", async ({ page }) => {
   await openCity(page, { width: 390, height: 844 });
-  await expect(page.locator("body")).toHaveScreenshot("release-city-mobile.png");
+  await expect(page).toHaveScreenshot("release-city-mobile.png", { fullPage: false });
 });
 
 test("keyboard navigation exposes places and reduced motion freezes ambient life", async ({ page }) => {
