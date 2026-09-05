@@ -190,10 +190,11 @@ function evidenceFor(entity) {
   return releaseEvidence(release) ?? entity.meta ?? "control-plane service";
 }
 
-function selectEntity(id) {
+function selectEntity(id, {reveal = false} = {}) {
   const entity = entityFor(id);
   if (!entity) return;
   selectedId = id;
+  if(reveal) setDetailsExpanded(true);
   city3d?.select(id);
   selectionCard.dataset.kind = entity.kind;
   selectionLed.dataset.status = normalizedStatus(entity.status);
@@ -201,6 +202,8 @@ function selectEntity(id) {
   detailTitle.textContent = entity.title;
   detailMeta.textContent = metadataFor(entity);
   detailEvidence.textContent = evidenceFor(entity);
+  detailMeta.title = detailMeta.textContent;
+  detailEvidence.title = detailEvidence.textContent;
   const ids = entityIds();
   const position = Math.max(0, ids.indexOf(id));
   entityPosition.textContent = `${position + 1}/${ids.length}`;
@@ -388,6 +391,16 @@ async function simulateRelease() {
 }
 
 simulateButton.addEventListener("click", simulateRelease);
+function setDetailsExpanded(expanded) {
+  selectionCard.classList.toggle("is-expanded",expanded);
+  detailTitle.setAttribute("aria-expanded",String(expanded));
+  const toggle=document.querySelector("#toggle-details");
+  toggle.setAttribute("aria-expanded",String(expanded));
+  toggle.setAttribute("aria-label",expanded?"Hide building details":"Show building details");
+  toggle.textContent=expanded?"⌄":"⌃";
+}
+for(const button of [detailTitle,document.querySelector("#toggle-details")]) button?.addEventListener("click",()=>setDetailsExpanded(!selectionCard.classList.contains("is-expanded")));
+setDetailsExpanded(!window.matchMedia("(max-width: 700px)").matches);
 document.querySelector("#fit-city").addEventListener("click", () => city3d?.fit());
 document.querySelector("#zoom-in").addEventListener("click", () => city3d?.zoom(0.82));
 document.querySelector("#zoom-out").addEventListener("click", () => city3d?.zoom(1.22));

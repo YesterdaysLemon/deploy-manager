@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { roadStrip, createBoulevard } from "./transport.js";
 import { SIGNAL_JUNCTION } from "./city-traffic.js";
 import { addPortLife, addGulls, warmVillageWindows } from "./city-life.js";
+import { createFrontage } from "./frontage.js";
 
 // Decorative places are deliberately separate from the real service plot map.
 // The same plan reserves level ground, places scenery, and routes its vehicles.
@@ -26,11 +27,17 @@ export function createRegionalPlan(perimeter, coastline) {
     {x:-7.6,z:villageZ+4.2,radius:2.25,key:"suburban/building-b",rotation:Math.PI},
   );
   const villageStreet = [[-11.5, villageZ], [harbor.x - 2.8, villageZ]];
-  const station = { x: rail.x - 1.35, z: 0, radius: 1, length: 10.5 };
+  const station = { x: rail.x + 1.6, z: 0, radius: 1, length: 10.5 };
+  const forecourtX=bounds.minX-2.4;
+  const walks=[
+    [[station.x+.55,-3],[forecourtX,-3],[forecourtX,villageZ],[-13.4,villageZ]],
+    [[-9.9,villageZ-1.14],[harbor.x-2.8,villageZ-1.14]],
+    [[-9.9,villageZ+1.14],[harbor.x-2.8,villageZ+1.14]],
+  ];
   return {
-    harbor, houses, station,
+    harbor, houses, station, walks,
     roads: [road, villageStreet, [[0, highway.z], [0, bounds.minZ]]],
-    pads: [...houses, {x:-11.5,z:villageZ,radius:2}, { x: harbor.x - 1.65, z: harbor.z, radius: 4.8 }],
+    pads: [...houses, ...[-4,0,4].map(z=>({x:station.x,z,radius:1})), {x:-11.5,z:villageZ,radius:2}, { x: harbor.x - 1.65, z: harbor.z, radius: 4.8 }],
   };
 }
 
@@ -101,6 +108,8 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
         width, 0.07, Math.hypot(bx - ax, bz - az) + width, color, Math.atan2(bx - ax, bz - az));
     }
   };
+  const exactPath=(start,end,width,color,y=.16)=>box("private-frontage",(start.x+end.x)/2,y,(start.z+end.z)/2,
+    width,.04,Math.hypot(end.x-start.x,end.z-start.z),color,Math.atan2(end.x-start.x,end.z-start.z));
   const jobs = [];
   const asset = (key, x, y, z, width, depth, height, rotation = 0) => {
     const job = city.cloneAsset(key, { width, depth, height }).then((model) => {
@@ -211,17 +220,22 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
   }
   for (const house of plan.houses) {
     box("village-garden", house.x, 0.05, house.z, 3.65, 0.2, 4, 0x9fb278);
-    asset(house.key, house.x, 0.17, house.z, 2.65, 2.7, 2.8, house.rotation).then(model=>{if(model)warmVillageWindows(model,city.windowDusk);});
-    const towardStreet = Math.sign(harbor.z - house.z);
-    path([[house.x, house.z + towardStreet * 1.35], [house.x, harbor.z - towardStreet * 0.86]], 1.2, 0xa6aaa4, 0.16);
+    jobs.push(asset(house.key, house.x, 0.17, house.z, 2.65, 2.7, 2.8, house.rotation).then(model=>{
+      if(!model)return;
+      warmVillageWindows(model,city.windowDusk);
+      const frontage=createFrontage(house,harbor.z,new THREE.Box3().setFromObject(model));
+      exactPath(frontage.start,frontage.end,frontage.width,frontage.kind==="driveway"?0xa6aaa4:0xd8ceb2);
+      box("entrance-step",frontage.start.x,.2,frontage.start.z,frontage.width,.08,.25,0xd4cbb0);
+    }));
     for (const dx of [-1.7, 1.7]) {
       box("garden-hedge", house.x + dx, 0.38, house.z, 0.22, 0.5, 3.2, 0x567c52);
     }
     asset("suburban/tree-small", house.x - 1.05, 0.16, house.z - 1.3, 0.8, 0.8, 1.8);
   }
 
-  // A single-sided platform fits the safe strip between town and the railway.
-  box("station-platform", station.x, 0.28, station.z, 1.05, 0.45, station.length, 0xc5c4b0);
+  for(const walk of plan.walks)for(let i=1;i<walk.length;i++)exactPath({x:walk[i-1][0],z:walk[i-1][1]},{x:walk[i][0],z:walk[i][1]},.45,0xd8ceb2,.145);
+  // A city-facing halt with a continuous, step-free forecourt connection.
+  box("station-platform", station.x, 0.28, station.z, 1.2, 0.45, station.length, 0xc5c4b0);
   box("platform-safety-line", station.x - 0.44, 0.512, 0, 0.07, 0.012, 10.2, 0xf4cf65);
   for (const z of [-3.6, -1.2, 1.2, 3.6]) {
     box("station-canopy-post", station.x + 0.34, 1.15, z, 0.07, 1.5, 0.07, 0x355e5a);
@@ -229,20 +243,12 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
   }
   box("station-canopy", station.x + 0.06, 1.94, 0, 1.42, 0.15, 8.8, 0x438a80);
   box("station-canopy-ridge", station.x + 0.06, 2.05, 0, 0.22, 0.12, 8.8, 0xede6cb);
-  // A pedestrian bridge and two narrow stair flights, not a driveway over rails.
-  const landingX=city.bounds.minX-2.1;
-  box("station-footbridge",(station.x+landingX)/2,2.65,0,landingX-station.x+.45,.16,.48,0xd4d0b8);
-  for(const x of [station.x,landingX]) {
-    for(let step=0;step<16;step++) {
-      const base=x===station.x?.5:.15,top=base+(16-step)*(2.66-base)/16;
-      box("station-stair",x,top/2,step*.29+.12,.36,top,.3,0xc5c4b0);
-    }
-  }
-  for(const z of [-.22,.22]) {
-    rod(new THREE.Vector3(station.x,3.05,z),new THREE.Vector3(landingX,3.05,z),.025,0x438a80);
-    for(const x of [station.x,landingX]) rod(new THREE.Vector3(x,2.7,z),new THREE.Vector3(x,3.05,z),.025,0x438a80);
-  }
-  for(let i=0;i<6;i++)box("station-pedestrian-crossing",landingX+.22+i*.24,.21,4.8,.12,.012,.55,0xe9e5ce);
+  const forecourtEdge=city.bounds.minX-1.98;
+  box("station-forecourt",(station.x+.6+forecourtEdge)/2,.135,0,forecourtEdge-station.x-.6,.16,11.6,0xd7d1b7);
+  box("station-ramp-landing",(station.x+.12+forecourtEdge)/2,.135,5.55,forecourtEdge-station.x+.2,.16,.65,0xd7d1b7);
+  const ramp=new THREE.Mesh(new THREE.BoxGeometry(.65,.08,2.4),material(0xc5c4b0));
+  ramp.name="station-access-ramp";ramp.position.set(station.x+.12,.32,4.4);ramp.rotation.x=.13;world.add(ramp);
+  for(let i=0;i<7;i++)box("station-pedestrian-crossing",city.bounds.minX-1.84+i*.24,.21,0,.12,.012,.55,0xe9e5ce);
 
   // Quay, two timber fingers, piles and fenders make the boats read as berthed.
   box("harbor-quay", harbor.x - 0.55, 0.12, harbor.z, 2.9, 0.48, harbor.depth, 0xb8b9a5);
@@ -302,7 +308,7 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
     person.add(body, head); world.add(person);
     const walking = curve(index % 2 ? [end, start] : [start, end], y);
     city.motion.push({ object: person, curve: walking, speed: 0.012 + index * 0.001,
-      ...(index%3===0?{stationPassenger:{x:station.x+.43,z:-3+index/3*2}}:{}),
+      ...(index%3===0?{stationPassenger:{x:station.x-.43,boardX:city.railX+.35,z:-2+index/3*1.6}}:{}),
       offset: (index * 0.233) % 1, pingPong: true, bob: 0.01 });
   }
 

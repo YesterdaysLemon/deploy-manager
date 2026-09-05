@@ -9,6 +9,8 @@ import { createBoulevard, roadStrip, continuousRail } from "./transport.js";
 import { batchStaticScenery } from "./render-batch.js";
 import { advanceCityTraffic, laneCurve, signalPhase, vehiclePose, vehiclesOverlap } from "./city-traffic.js";
 import { healthScenery, railSchedule, updatePortLife, updateGulls } from "./city-life.js";
+import { MapTapGesture, clampMapLabel } from "./interaction.js";
+import { cityRenderPolicy, renderPixelRatio } from "./render-policy.js";
 export { oceanWaveHeightAt, OCEAN_WAVE_SETTINGS } from "./ocean.js";
 import {
   CONTROL_PLOT_ADDRESSES,
@@ -87,6 +89,8 @@ export const ASSET_URLS = Object.freeze({
   "trains/passenger-a": "/assets/kenney/trains/train-electric-city-a.glb",
   "trains/passenger-b": "/assets/kenney/trains/train-electric-city-b.glb",
   "trains/passenger-c": "/assets/kenney/trains/train-electric-city-c.glb",
+  "trains/regional-engine": "/assets/kenney/trains/train-diesel-b.glb",
+  "trains/regional-coach": "/assets/kenney/trains/train-locomotive-passenger-a.glb",
   "trains/carriage": "/assets/kenney/trains/train-carriage-container-blue.glb",
   "trains/carriage-coal": "/assets/kenney/trains/train-carriage-coal.glb",
   "watercraft/tug": "/assets/kenney/watercraft/boat-tug-a.glb",
@@ -308,7 +312,7 @@ export function createPerimeterBands(layout) {
   const highwayWidth = 2.28;
   const railWidth = 1.48;
   const highwayZ = bounds.minZ - 4.4;
-  const railX = bounds.minX - 3.05;
+  const railX = bounds.minX - 5.1;
   const sideStartZ = highwayZ + 4.4;
   const sideEndZ = bounds.maxZ + 5.2;
   const shoreX = bounds.maxX + 3.35;
@@ -765,7 +769,7 @@ export function createTerrainContext(perimeter, highwayCurve, railCurve, coastli
     flatCorridors: [highwayCurve, railCurve]
       .filter(Boolean)
       .map((curve) => curve.getSpacedPoints(128))
-      .concat(regionalPlan.roads, [createBoulevard(perimeter.bounds).getSpacedPoints(96)]),
+      .concat(regionalPlan.roads, regionalPlan.walks, [createBoulevard(perimeter.bounds).getSpacedPoints(96)]),
     bounds: {
       minX: perimeter.ground.minX,
       maxX: perimeter.ground.maxX,
@@ -1047,11 +1051,13 @@ function variableProgress(item, elapsed) {
 }
 
 function createTextLabel(entity) {
-  const label = document.createElement("div");
+  const label = document.createElement("button");
+  label.type = "button";
   label.className = "city3d-label";
   label.dataset.entity = entity.id;
   label.dataset.kind = entity.kind;
-  label.setAttribute("aria-hidden", "true");
+  label.setAttribute("aria-label", `Show details for ${entity.name}`);
+  label.setAttribute("aria-controls", "selection-details");
 
   const top = document.createElement("span");
   top.className = "city3d-label-code";
@@ -1094,6 +1100,8 @@ export class City3D {
   constructor({ stage, onSelect = () => {}, onNavigate = () => {}, onActivate = () => {} } = {}) {
     if (!stage) throw new Error("City3D requires a stage element");
     this.stage = stage;
+    this.renderPolicy = cityRenderPolicy({width: stage.clientWidth, coarsePointer: window.matchMedia("(pointer: coarse)").matches});
+    this.stage.dataset.renderProfile = this.renderPolicy.compact ? "mobile" : "desktop";
     this.onSelect = onSelect;
     this.onNavigate = onNavigate;
     this.onActivate = onActivate;
@@ -1149,12 +1157,12 @@ export class City3D {
     this.camera.position.set(...CAMERA_HOME.position);
     this.camera.lookAt(0, 0, 0);
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, stage.clientWidth < 700 ? 1.25 : 1.5));
+    this.renderer = new THREE.WebGLRenderer({ antialias: !this.renderPolicy.compact, powerPreference: "default" });
+    this.renderer.setPixelRatio(renderPixelRatio(this.renderPolicy, stage.clientWidth, stage.clientHeight, window.devicePixelRatio || 1));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.toneMappingExposure = 0.94;
-    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.enabled = this.renderPolicy.shadows;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.shadowMap.needsUpdate = true;
@@ -1169,7 +1177,7 @@ export class City3D {
     stage.prepend(this.renderer.domElement);
     stage.append(this.labelRenderer.domElement);
 
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+    this.controls = new OrbitControls(this.camera, stage);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.075;
     this.controls.enablePan = true;
@@ -1184,7 +1192,7 @@ export class City3D {
       this.camera.position.x - this.controls.target.x,
       this.camera.position.z - this.controls.target.z,
     );
-    this.onControlsChange = () => this.updateCompass();
+    this.onControlsChange = () => { this.updateCompass(); this.labelsDirty = true; };
     this.controls.addEventListener("change", this.onControlsChange);
 
     const loadingManager = new THREE.LoadingManager();
@@ -1246,25 +1254,65 @@ export class City3D {
   }
 
   bindInput() {
+    this.tapGesture = new MapTapGesture();
     const pointerdown = (event) => {
-      if (event.button !== 0) return;
-      this.pointerStart = { x: event.clientX, y: event.clientY };
+      clearTimeout(this.tapFallbackTimer);
+      this.tapGesture.down(event);
     };
     const pointerup = (event) => {
-      if (!this.pointerStart || Math.hypot(event.clientX - this.pointerStart.x, event.clientY - this.pointerStart.y) > 5) {
-        this.pointerStart = null;
+      const gesture=this.tapGesture.up(event);
+      if(!gesture)return;
+      if(!gesture.tap){this.pendingLabelTap=null;this.pendingGhostTap=null;this.suppressGhostClickUntil=performance.now()+400;return;}
+      const label = gesture.target?.closest?.(".city3d-label");
+      if(label) {
+        this.pendingLabelTap={label,at:performance.now()};
+        this.tapFallbackTimer=setTimeout(()=>{this.pendingLabelTap=null;this.onSelect(label.dataset.entity,{reveal:true});},350);
         return;
       }
-      this.pointerStart = null;
-      const entityId = this.entityAtPointer(event);
+      if(gesture.target?.closest?.(".city3d-ghost-link")) {
+        this.suppressGhostClickUntil=0; // A fresh tap is not the preceding swipe's compatibility click.
+        const link=gesture.target.closest(".city3d-ghost-link");
+        this.pendingGhostTap={link,at:performance.now()};
+        // A moving label can lose the synthesized click after a touch orbit.
+        // Allow compatibility clicks to finish before presenting a modal, so
+        // the same finger cannot click through into a newly exposed setup link.
+        this.tapFallbackTimer=setTimeout(()=>{
+          this.pendingGhostTap=null;
+          const dialog=document.querySelector("#build-city-dialog");
+          if(dialog&&!dialog.open){link.focus({preventScroll:true});dialog.showModal();}
+        },350);
+        return;
+      }
+      const entityId = gesture.target?.closest?.(".city3d-label")?.dataset.entity ?? this.entityAtPointer(event);
       if (entityId) this.onSelect(entityId);
     };
+    const pointercancel = (event) => {this.tapGesture.up(event,true);this.pendingLabelTap=null;this.pendingGhostTap=null;this.suppressGhostClickUntil=performance.now()+400;};
+    const click = (event) => {
+      const label=event.target.closest?.(".city3d-label");
+      const labelTap=this.pendingLabelTap;this.pendingLabelTap=null;
+      if(label) {
+        clearTimeout(this.tapFallbackTimer);
+        event.preventDefault();
+        if(event.detail===0 || (labelTap?.label===label && performance.now()-labelTap.at<1000)) this.onSelect(label.dataset.entity,{reveal:true});
+        return;
+      }
+      const pending=this.pendingGhostTap;this.pendingGhostTap=null;
+      if(!pending || performance.now()-pending.at>1000)return;
+      clearTimeout(this.tapFallbackTimer);
+      event.preventDefault();event.stopPropagation();
+      if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey){window.open(pending.link.href,"_blank","noopener,noreferrer");return;}
+      const dialog=document.querySelector("#build-city-dialog");
+      if(dialog && !dialog.open){pending.link.focus({preventScroll:true});dialog.showModal();}
+    };
     const pointermove = (event) => {
+      this.tapGesture.move(event);
+      if(event.pointerType==="touch")return;
       const isEntity = Boolean(this.entityAtPointer(event));
       this.renderer.domElement.classList.toggle("is-over-entity", isEntity);
     };
     const pointerleave = () => this.renderer.domElement.classList.remove("is-over-entity");
     const keydown = (event) => {
+      if(event.target!==this.renderer.domElement)return;
       if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
         event.preventDefault();
         this.onNavigate(-1);
@@ -1279,9 +1327,9 @@ export class City3D {
         this.fit();
       }
     };
-    this.inputHandlers = { pointerdown, pointerup, pointermove, pointerleave, keydown };
+    this.inputHandlers = { pointerdown, pointerup, pointercancel, pointermove, pointerleave, keydown, click };
     for (const [type, handler] of Object.entries(this.inputHandlers)) {
-      this.renderer.domElement.addEventListener(type, handler);
+      this.stage.addEventListener(type, handler);
     }
   }
 
@@ -1296,6 +1344,7 @@ export class City3D {
   }
 
   updateCompass() {
+    this.stage.dataset.cameraZoom=this.camera.zoom.toFixed(3);
     const azimuth = Math.atan2(
       this.camera.position.x - this.controls.target.x,
       this.camera.position.z - this.controls.target.z,
@@ -1307,10 +1356,12 @@ export class City3D {
   resize() {
     const width = Math.max(1, this.stage.clientWidth);
     const height = Math.max(1, this.stage.clientHeight);
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, width < 700 ? 1.25 : 1.5);
+    const pixelRatio = renderPixelRatio(this.renderPolicy, width, height, window.devicePixelRatio || 1);
     if (this.renderer.getPixelRatio() !== pixelRatio) this.renderer.setPixelRatio(pixelRatio);
     const aspect = width / height;
-    const frustum = this.baseFrustum ?? 39;
+    const frustum = aspect < .8 && this.layout
+      ? Math.max(this.baseFrustum ?? 39, (this.layout.extent * 1.5 + 6) / aspect)
+      : this.baseFrustum ?? 39;
     this.camera.left = -(frustum * aspect) / 2;
     this.camera.right = (frustum * aspect) / 2;
     this.camera.top = frustum / 2;
@@ -1500,6 +1551,7 @@ export class City3D {
     ]);
     if (generation !== this.worldGeneration) return;
     this.worldStream = new WorldStream({
+      resolution: this.renderPolicy.surfaceResolution, treeCount: this.renderPolicy.treeCount,
       world: this.world, waterMaterial: this.waterMaterial, roadModel, treeModel, context: this.terrainContext,
       heightAt: (x, z) => terrainHeightAt(x, z, this.terrainContext),
       colorAt: (x, z) => {
@@ -1833,7 +1885,11 @@ export class City3D {
     const bounds = new THREE.Box3().setFromObject(group);
     const height = Math.max(2.1, bounds.max.y - group.position.y);
     const labelElement = createTextLabel(entity);
-    const labelObject = new CSS2DObject(labelElement);
+    const labelAnchor = document.createElement("div");
+    labelAnchor.className = "city3d-label-anchor";
+    labelAnchor.append(labelElement);
+    const labelObject = new CSS2DObject(labelAnchor);
+    labelObject.center.set(.5, 1);
     const labelNudge = entity.col === 0 ? 0.72 : entity.col === this.layout.size - 1 ? -0.72 : 0;
     labelObject.position.set(labelNudge, height + 0.62, 0);
     group.add(labelObject);
@@ -1976,11 +2032,20 @@ export class City3D {
     link.textContent = "BUILD YOUR OWN CITY ↗";
     link.setAttribute("aria-label", "Build your own city — setup options");
     link.addEventListener("click",event=>{
+      clearTimeout(this.tapFallbackTimer);
       if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
       const dialog=document.querySelector("#build-city-dialog");
-      if(dialog?.showModal){event.preventDefault();event.stopPropagation();dialog.showModal();}
+      if(dialog?.showModal){event.preventDefault();event.stopPropagation();if(performance.now()>(this.suppressGhostClickUntil??0)&&!dialog.open)dialog.showModal();}
     });
-    const label = new CSS2DObject(link);
+    const anchorElement=document.createElement("div");anchorElement.className="city3d-ghost-anchor";anchorElement.append(link);
+    const label = new CSS2DObject(anchorElement);
+    label.center.set(.5,1);
+    label.onAfterRender=(_renderer,_scene,camera)=>{
+      if(this.stage.clientWidth>700)return;
+      const point=new THREE.Vector3().setFromMatrixPosition(label.matrixWorld).project(camera);
+      const position=clampMapLabel((point.x+1)*this.stage.clientWidth/2,(1-point.y)*this.stage.clientHeight/2,anchorElement.offsetWidth,anchorElement.offsetHeight,this.stage.clientWidth,this.stage.clientHeight);
+      anchorElement.style.transform=`translate(-50%, -100%) translate(${position.x}px, ${position.y}px)`;
+    };
     label.position.set(anchor.cell.x, 5.7, anchor.cell.z);
     this.world.add(label);
   }
@@ -2083,13 +2148,14 @@ export class City3D {
       speedPhase: 0.8,
       carGap: 3.08 / trackLength,
     });
-    const passenger = await Promise.all(["a", "b", "c"].map((part) => this.cloneAsset(
-      `trains/passenger-${part}`, { width: 1.3, depth: 3, height: 1.65 },
-    )));
+    const passenger = await Promise.all([
+      this.cloneAsset("trains/regional-engine", { width: 1.18, depth: 2.5, height: 1.45 }),
+      this.cloneAsset("trains/regional-coach", { width: 1.18, depth: 2.65, height: 1.4 }),
+      this.cloneAsset("trains/regional-coach", { width: 1.18, depth: 2.65, height: 1.4 }),
+    ]);
     if (generation !== this.worldGeneration) return;
-    passenger[2].children[0].rotation.y += Math.PI;
     for (const car of passenger) this.world.add(car);
-    this.trains.push({ ...this.trains[this.trains.length - 1], cars: passenger, offset: 0.76 });
+    this.trains.push({ ...this.trains[this.trains.length - 1], cars: passenger, carGap: 2.8 / trackLength, offset: 0.76 });
     let stationProgress=0,minimum=Infinity;
     for(let i=0;i<=1000;i++){
       const point=this.railCurve.getPointAt(i/1000),distance=Math.hypot(point.x-this.railX,point.z-3);
@@ -2565,7 +2631,11 @@ export class City3D {
   animate(frameTime = performance.now()) {
     if (this.destroyed) return;
     this.animationFrame = requestAnimationFrame((nextFrameTime) => this.animate(nextFrameTime));
-    if (!this.visible) return;
+    if (!this.visible || document.hidden) return;
+    // Gate the simulation and chunk builder too, not just the final draw call.
+    const interval=this.renderPolicy.frameMs;
+    if(frameTime-(this.lastBudgetFrame??-Infinity)<interval-.5)return;
+    this.lastBudgetFrame=frameTime;
     if(document.querySelector("#build-city-dialog")?.open) {
       if(frameTime-(this.lastDialogFrame??0)<250)return;
       this.lastDialogFrame=frameTime;
@@ -2595,7 +2665,7 @@ export class City3D {
     if (this.waterMaterial) {
       this.waterMaterial.uniforms.uTime.value = motionElapsed;
       this.waterMaterial.uniforms.uViewDirection.value.copy(this.camera.position).sub(this.controls.target).normalize();
-      this.waterMaterial.uniforms.uDetail.value = this.controls.getPolarAngle()>1.12 || this.camera.zoom<0.8 ? 8 : 14;
+      this.waterMaterial.uniforms.uDetail.value = this.controls.getPolarAngle()>1.12 || this.camera.zoom<0.8 ? 8 : this.renderPolicy.waterDetail;
     }
     this.updateWorldStream();
     const trafficDelta = this.reducedMotion ? 0 : Math.min(0.1, (frameTime - (this.lastTrafficFrame ?? frameTime)) / 1000);
@@ -2656,7 +2726,7 @@ export class City3D {
     for(const item of this.motion.filter(item=>item.stationPassenger)) {
       const service=this.stationService,base=item.stationPassenger;
       const boarding=service?.dwelling?THREE.MathUtils.smoothstep(service.dwellProgress,.12,.8):0;
-      item.object.position.set(THREE.MathUtils.lerp(base.x,this.railX-.35,boarding),THREE.MathUtils.lerp(.53,.68,boarding),base.z);
+      item.object.position.set(THREE.MathUtils.lerp(base.x,base.boardX,boarding),THREE.MathUtils.lerp(.53,.68,boarding),base.z);
       item.object.scale.setScalar(service?.dwelling?1-THREE.MathUtils.smoothstep(service.dwellProgress,.72,.95):Math.min(1,(service?.travelTime??0)/4));
     }
     if(this.windowDusk)this.windowDusk.value=this.reducedMotion?.45:.25+.65*(.5-.5*Math.cos(motionElapsed*Math.PI*2/720));
@@ -2691,12 +2761,18 @@ export class City3D {
         : group.userData.live ? 1.2 + Math.sin(elapsed * 6) * 0.36 : 1 + Math.sin(elapsed * 2.4 + group.position.x) * 0.08;
       group.userData.beacon.scale.setScalar(pulse);
     }
-    if (!this.reducedMotion && frameTime - (this.lastShadowFrame ?? 0) >= 50) {
+    if (this.renderPolicy.shadows && !this.reducedMotion && frameTime - (this.lastShadowFrame ?? 0) >= 100) {
       this.renderer.shadowMap.needsUpdate = true; this.lastShadowFrame = frameTime;
     }
     this.renderer.render(this.scene, this.camera);
-    if (this.reducedMotion || frameTime - (this.lastLabelFrame ?? 0) >= 33) {
-      this.labelRenderer.render(this.scene, this.camera); this.lastLabelFrame = frameTime;
+    if(frameTime-(this.lastRenderAudit??0)>1000) {
+      this.stage.dataset.drawCalls=String(this.renderer.info.render.calls);
+      this.stage.dataset.triangles=String(this.renderer.info.render.triangles);
+      this.stage.dataset.frameBudget=String(Math.round(interval));
+      this.lastRenderAudit=frameTime;
+    }
+    if (this.reducedMotion || this.labelsDirty || frameTime - (this.lastLabelFrame ?? 0) >= 33) {
+      this.labelRenderer.render(this.scene, this.camera); this.lastLabelFrame = frameTime; this.labelsDirty = false;
     }
   }
 
@@ -2704,12 +2780,13 @@ export class City3D {
     if (this.destroyed) return;
     this.destroyed = true;
     cancelAnimationFrame(this.animationFrame);
+    clearTimeout(this.tapFallbackTimer);
     this.resizeObserver?.disconnect();
     this.motionPreference?.removeEventListener?.("change", this.onMotionPreferenceChange);
     this.controls?.removeEventListener("change", this.onControlsChange);
     this.controls?.dispose();
     for (const [type, handler] of Object.entries(this.inputHandlers ?? {})) {
-      this.renderer.domElement.removeEventListener(type, handler);
+      this.stage.removeEventListener(type, handler);
     }
     this.clearWorld();
     this.scene.remove(this.selectionMarker);

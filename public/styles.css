@@ -454,7 +454,7 @@ button:focus-visible,
   white-space: nowrap;
 }
 
-.selection-card > p {
+.selection-card > p, .selection-details > p {
   margin: 7px 0 0;
   overflow: hidden;
   color: var(--ink-soft);
@@ -470,6 +470,8 @@ button:focus-visible,
   color: rgba(23, 24, 18, 0.72);
   font-size: 8px;
 }
+.selection-card[data-kind="control"] #detail-evidence,
+.selection-card[data-kind="datastore"] #detail-evidence { padding-right: 0; }
 
 #detail-link {
   position: absolute;
@@ -595,15 +597,32 @@ button:focus-visible,
 }
 
 .city3d-label {
+  appearance: none;
+  border: 0;
+  padding: 4px;
+  min-height: 44px;
+  min-width: 44px;
+  background: transparent;
+  pointer-events: auto;
+  cursor: pointer;
   display: flex;
   align-items: center;
   gap: 0;
   opacity: 0.52;
   color: var(--ink);
   white-space: nowrap;
-  transform: translate(-50%, -100%);
-  transition: opacity 160ms ease, transform 160ms ease;
+  transition: opacity 160ms ease;
 }
+
+.city3d-label-anchor, .city3d-ghost-anchor { transition: none; }
+.city3d-label-anchor { pointer-events: none; }
+.city3d-label.is-selected { pointer-events: auto; }
+.city3d-ghost-anchor { pointer-events: auto; }
+.selection-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.details-toggle { display: none; }
+.selection-card:not(.is-expanded) .selection-details { display: none; }
+.title-toggle { appearance: none; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; padding: 0; min-height: 44px; cursor: pointer; }
+.title-toggle:focus-visible, .city3d-label:focus-visible { outline: 2px solid var(--ink); outline-offset: 3px; }
 
 .city3d-label-code {
   display: grid;
@@ -633,7 +652,7 @@ button:focus-visible,
   background: rgba(247, 241, 217, 0.92);
   box-shadow: 3px 4px 0 rgba(23, 24, 18, 0.13);
   opacity: 1;
-  transform: translate(-50%, calc(-100% - 3px));
+  transform: translateY(-3px);
 }
 
 .city3d-label.is-selected .city3d-label-code {
@@ -693,7 +712,7 @@ button:focus-visible,
 
 .city3d-ghost-link {
   display: inline-flex;
-  min-height: 31px;
+  min-height: 44px;
   align-items: center;
   padding: 7px 10px;
   border: 1px dashed rgba(23, 24, 18, 0.72);
@@ -706,15 +725,15 @@ button:focus-visible,
   text-decoration: none;
   white-space: nowrap;
   pointer-events: auto;
-  transform: translate(-50%, -100%);
   backdrop-filter: blur(6px);
-  transition: color 140ms ease, background 140ms ease, transform 140ms ease;
+  transition: color 140ms ease, background 140ms ease;
 }
 
+@media (hover: hover) and (pointer: fine) {
 .city3d-ghost-link:hover {
   background: var(--ink);
   color: var(--paper-light);
-  transform: translate(-50%, calc(-100% - 3px));
+}
 }
 
 @keyframes packet-turn {
@@ -730,6 +749,9 @@ button:focus-visible,
 }
 
 @media (max-width: 700px) {
+  /* Avoid blending a full-screen noise layer over every WebGL frame on iOS. */
+  .city-shell::after { background-image: none; mix-blend-mode: normal; }
+  .brand, .selection-card, .city3d-ghost-link, .release-button, .icon-button, .repo-button, .map-controls button { backdrop-filter: none; }
   .city-shell {
     min-height: 360px;
   }
@@ -783,13 +805,20 @@ button:focus-visible,
     bottom: 10px;
     left: 10px;
     width: min(280px, calc(100vw - 118px));
-    min-height: 112px;
+    min-height: 0;
     padding: 11px 13px 12px;
   }
 
   .selection-card h1 {
-    font-size: 20px;
+    font-size: 18px;
   }
+  .details-toggle { display: block; min-width: 44px; min-height: 44px; border: 1px solid var(--ink); background: transparent; color: var(--ink); cursor: pointer; }
+  .selection-card:not(.is-expanded) .selection-details { display: none; }
+  .selection-card.is-expanded #detail-meta, .selection-card.is-expanded #detail-evidence { white-space: normal; overflow: visible; text-overflow: clip; }
+  .selection-card.is-expanded #detail-evidence { padding-right: 0; font-size: 10px; line-height: 1.5; }
+  .selection-card.is-expanded #detail-meta { font-size: 11px; line-height: 1.4; }
+  .selection-card.is-expanded h1 { white-space: normal; }
+  .selection-card.is-expanded #detail-link:not([hidden]) { position: static; display: inline-block; min-height: 44px; line-height: 44px; margin-top: 4px; }
 
   .map-controls {
     right: 10px;
@@ -815,12 +844,13 @@ button:focus-visible,
     max-width: calc(100vw - 20px);
   }
 
-  .city3d-label:not(.is-selected):not(.is-simulating):not(.is-live) {
+  .city3d-label {
     display: none;
   }
+  .city3d-label.is-selected { display: flex; }
 
   .city3d-label-layer {
-    clip-path: inset(56px 0 96px 0);
+    clip-path: inset(56px 0 116px 0);
   }
 }
 

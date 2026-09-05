@@ -17,9 +17,9 @@
     <meta name="twitter:card" content="summary_large_image" />
     <link rel="canonical" href="https://deploy.alirezaafshan.com/" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="stylesheet" href="/styles.css?v=city-3d-33" />
-    <script src="/city3d.bundle.js?v=city-3d-33" defer></script>
-    <script src="/app.js?v=city-3d-33" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=city-3d-37" />
+    <script src="/city3d.bundle.js?v=city-3d-37" defer></script>
+    <script src="/app.js?v=city-3d-37" defer></script>
   </head>
   <body>
     <main class="city-shell" id="site-shell">
@@ -58,10 +58,15 @@
             <button id="entity-next" type="button" aria-label="Next city place">→</button>
           </div>
         </div>
-        <h1 id="detail-title">Deploy Manager</h1>
-        <p id="detail-meta">online · release d3adb33</p>
-        <p id="detail-evidence">waiting for release evidence</p>
-        <a id="detail-link" href="#" target="_blank" rel="noreferrer" hidden>OPEN SERVICE ↗</a>
+        <div class="selection-heading">
+          <h1><button id="detail-title" class="title-toggle" type="button" aria-expanded="false" aria-controls="selection-details">Deploy Manager</button></h1>
+          <button id="toggle-details" class="details-toggle" aria-label="Show building details" aria-expanded="false" aria-controls="selection-details">⌃</button>
+        </div>
+        <div id="selection-details" class="selection-details">
+          <p id="detail-meta">connecting</p>
+          <p id="detail-evidence">waiting for release evidence</p>
+          <a id="detail-link" href="#" target="_blank" rel="noreferrer" hidden>OPEN SERVICE ↗</a>
+        </div>
       </section>
 
       <div class="simulation-toast" id="simulation-toast" role="status" hidden>

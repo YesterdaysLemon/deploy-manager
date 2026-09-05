@@ -30,7 +30,7 @@ This keeps the visualizer quick to load and makes upgrades auditable.
 | Roads | `road-straight`, `road-crossroad`, `road-curve`, `road-bend`, `sign-highway`, `traffic-light-object-vertical` |
 | Suburban | `building-type-a`, `building-type-b`, `building-type-d`, `building-type-e`, `building-type-h`, `building-type-n`, `building-type-r`, `tree-large`, `tree-small` |
 | Cars | `delivery`, `sedan`, `taxi`, `truck` |
-| Trains | `railroad-straight`, `railroad-corner-large`, `train-diesel-a`, `train-carriage-container-blue`, `train-carriage-coal`, `train-electric-city-a`, `train-electric-city-b`, `train-electric-city-c` |
+| Trains | `railroad-straight`, `railroad-corner-large`, `train-diesel-a`, `train-diesel-b`, `train-locomotive-passenger-a`, `train-carriage-container-blue`, `train-carriage-coal`; electric-city variants retained as reference assets |
 | Watercraft | `boat-tug-a`, `ship-cargo-a`, `boat-sail-a`, `boat-fishing-small`, `boat-speed-a`, `buoy` |
 
 The coastal region adds a decorative village, single-sided station platform, timber piers, quay, crane, lighthouse, and pedestrians. These are ambient scenery, not additional services or release events. `client/region.js` shares its road and building reservations with the terrain generator so gardens, transport corridors, and port surfaces remain level. Freight and passenger consists share one timetable with separated phases; road vehicles follow their lane's leader rather than passing through slower cars. Working shipping lanes remain seaward of the marina fingers. Rocks and highway posts use instanced geometry.
@@ -43,7 +43,15 @@ The approach roads use the authored broad curve and tight bend. `client/transpor
 
 `client/render-batch.js` instances repeated static geometry and merges compatible props by material. Buildings, release effects, traffic, and individually unloaded chunks are excluded. Shadows update at 20 Hz; labels at approximately 30 Hz; animation and controls retain the display frame cadence. Device pixel ratio is capped at 1.5 on desktop and 1.25 on narrow layouts. See `docs/scene-render-performance.md` for the measured scope.
 
-The boulevard's four corners now use Kenney's actual `road-bend` pieces, with centerline radius matched to their authored connector ports. The cul-de-sac has seven homes in total. The station uses a pedestrian overpass instead of a driveway across the tracks. `client/city-traffic.js` coordinates lane-separated vehicles and the four-faced hovering signal; the near and distant scene still represents ambient activity, not measured VPS network traffic.
+The boulevard's four corners use Kenney's actual `road-bend` pieces, with centerline radius matched to their authored connector ports. The cul-de-sac has seven homes in total. The station has a city-facing platform and pedestrian forecourt. `client/city-traffic.js` coordinates lane-separated vehicles and the four-faced hovering signal; the near and distant scene still represents ambient activity, not measured VPS network traffic.
+
+The station/frontage refinement provides a city-facing halt,
+forecourt, short access ramp, and a walking connection to the village. The rail
+corridor is moved outward to reserve that space. Passenger service is now a
+compact diesel-b engine with two matching locomotive-passenger-a coaches, distinct
+from the freight consist. `client/frontage.js` gives each house an entrance anchor
+and an exact connection to a straight or circular kerb; non-garage houses receive
+footpaths. Private paths never reuse street-segment end caps.
 
 `client/city-life.js` gives Port 443 a deterministic boat/crane/parcel/van shift,
 including a doorstep handoff and turning movements. Its working boat stays inshore

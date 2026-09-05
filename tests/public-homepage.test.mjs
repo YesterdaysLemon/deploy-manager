@@ -94,6 +94,8 @@ test("public release city stays focused and does not leak deploy secrets", async
   assert.match(page, /id="simulate-push"/);
   assert.match(page, /Watch a release/);
   assert.match(page, /SOURCE ↗/);
+  assert.match(page, /id="detail-meta">connecting/);
+  assert.doesNotMatch(page, /online · release d3adb33/);
   assert.doesNotMatch(page, /Ship a release/);
   assert.match(page, /city3d\.bundle\.js/);
   assert.doesNotMatch(page, /Ship the little server|Not a cluster orchestrator|For humans and their agents/i);

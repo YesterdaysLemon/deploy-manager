@@ -1,5 +1,38 @@
 # Scene refinement and rendering check — 2026-09-04
 
+## iPhone feedback follow-up — preview v37
+
+The phone profile now gates the entire render/simulation/streaming frame to at
+most 30 Hz, uses DPR at most 1 with a 650,000-pixel backing-buffer budget, skips
+MSAA and shadow-map passes, samples eight water bands, and builds 12-by-12
+surface tiles with 18 rather than 45 distant tree candidates per chunk. Desktop
+shadows refresh at 10 Hz. Hidden documents skip scene work. Phones also skip the
+full-screen multiply/noise layer and live backdrop blurs. These supersede the
+older quality limits documented below; there is no physical-device FPS claim.
+
+In the same headless Edge iPhone 15 emulation (393 CSS pixels wide), normal
+motion and default camera, five-second WebGL submission samples counted
+239,321 calls in v36 versus 74,968 in the first v37 profile: about 69% fewer
+submissions per second. Display callbacks were comparable (418 versus 417).
+This primarily measures the frame budget, not a 69% per-frame improvement,
+GPU time, or real iPhone performance. A separate final-profile horizon swipe
+with 4x CPU throttling streamed 50 surface chunks, drained the queue, and
+recorded no main-thread tasks over 50 ms during the sampled gesture plus seven
+seconds of settling. It does not emulate a mobile GPU.
+
+Building labels are real buttons with 44px minimum targets and accessible names.
+Tapping a label reveals details; tapping the card heading expands/collapses it.
+Public-service navigation remains an explicit separate link. A moving touch
+target can lose its synthesized click after an orbit: a gesture-validated,
+cancelable fallback handles this after compatibility clicks have settled,
+without opening setup on drags or clicking through into a setup link.
+
+Verified title taps in local Playwright WebKit as well as Edge. WebKit emitted
+a CSP warning when the screenshot tool injected its capture stylesheet; the
+city and title interactions rendered successfully without relaxing site CSP.
+The user-reported deployed Safari build still requires a real iPhone retest
+after separately authorized deployment. Local preview: port 4179, v37.
+
 Local preview only. No production deployment or VPS changes.
 
 ## Measurement
@@ -28,6 +61,17 @@ About **64% fewer draw submissions** in the final sampled view. Cadence remained
 Node tests cover closed-loop clearance, matching road/rail cross sections, sleeper phase, batching exclusions, stream disposal, shoreline continuity, and the existing service/deployment behavior. Browser checks cover desktop/mobile composition, keyboard and reduced motion, and factual release receipts. Manual checks additionally exercise the release demonstration and distant streamed railway. Screenshots are in `output/playwright/` and the reviewed visual baselines in `tests/visual/`.
 
 Reference APIs: [Three.js renderer statistics](https://threejs.org/docs/pages/WebGLRenderer.html#info), [InstancedMesh](https://threejs.org/docs/pages/InstancedMesh.html).
+
+## Mobile interaction refinement
+
+Renderer-positioned labels now have dedicated, transition-free anchors. The
+camera's change event requests label projection on the same frame; idle labels
+retain the previous throttled cadence. Normal-motion touch tests cover a swipe
+starting on the setup invitation, subpixel anchor tracking, pinch-to-zoom without
+accidental selection, modal activation without tap-through, and the compact
+expandable detail card. These complement, rather than replace, reduced-motion
+screenshots. The mobile invitation is clamped inside the viewport; the phone
+camera starts with the complete city footprint in view.
 
 ## Horizon follow-up
 

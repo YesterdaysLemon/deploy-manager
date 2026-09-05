@@ -82,7 +82,8 @@ export function createSurfaceTile(cx, cz, ocean, { shoreX, heightAt, colorAt }, 
 // The streamer owns generated geometry and instances, but borrows materials
 // and source GLB geometry. Unloading a chunk must never dispose cached assets.
 export class WorldStream {
-  constructor({ world, waterMaterial, roadModel, treeModel, context, heightAt, colorAt, siteDistance }) {
+  constructor({ world, waterMaterial, roadModel, treeModel, context, heightAt, colorAt, siteDistance, resolution = 24, treeCount = 45 }) {
+    this.resolution=resolution;this.treeCount=treeCount;
     Object.assign(this, { world, waterMaterial, roadModel, treeModel, context, heightAt, colorAt, siteDistance });
     this.chunks = new Map(); this.routes = new Map();
     this.terrainMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
@@ -133,18 +134,18 @@ export class WorldStream {
       const minX = cx * WORLD_CHUNK_SIZE, maxX = minX + WORLD_CHUNK_SIZE;
       const surface = { shoreX: this.context.perimeter.coast.shoreX, heightAt: this.heightAt, colorAt: this.colorAt };
       if (minX < surface.shoreX + 1) {
-        const mesh = new THREE.Mesh(createSurfaceTile(cx, cz, false, surface), this.terrainMaterial);
+        const mesh = new THREE.Mesh(createSurfaceTile(cx, cz, false, surface, this.resolution), this.terrainMaterial);
         mesh.name = "analytic-rolling-terrain"; mesh.receiveShadow = true; group.add(mesh);
       }
       if (maxX > surface.shoreX - 1) {
-        const mesh = new THREE.Mesh(createSurfaceTile(cx, cz, true, surface), this.waterMaterial);
+        const mesh = new THREE.Mesh(createSurfaceTile(cx, cz, true, surface, this.resolution), this.waterMaterial);
         mesh.name = "open-ocean-boundary"; group.add(mesh);
       }
       // The handcrafted region keeps its curated vegetation; distant chunks
       // grow deterministic woodland so revisiting a location preserves it.
       if (minX < surface.shoreX - 2) {
         const placements = [];
-        for (let i = 0; i < 45; i += 1) {
+        for (let i = 0; i < this.treeCount; i += 1) {
           const random = (salt) => ((Math.sin(cx * 127.1 + cz * 311.7 + i * 71.3 + salt) * 43758.5453) % 1 + 1) % 1;
           const x = minX + random(1) * WORLD_CHUNK_SIZE, z = (cz + random(3)) * WORLD_CHUNK_SIZE;
           const b = this.context.perimeter.bounds;

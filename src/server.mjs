@@ -181,6 +181,8 @@ const kenneyModelPaths = [
   "trains/train-carriage-coal.glb",
   "trains/train-carriage-container-blue.glb",
   "trains/train-diesel-a.glb",
+  "trains/train-diesel-b.glb",
+  "trains/train-locomotive-passenger-a.glb",
   "trains/train-electric-city-a.glb",
   "trains/train-electric-city-b.glb",
   "trains/train-electric-city-c.glb",

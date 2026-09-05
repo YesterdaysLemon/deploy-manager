@@ -4,6 +4,24 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import * as THREE from "three";
+import { cityRenderPolicy, renderPixelRatio } from "../client/render-policy.js";
+
+test("phones and touch tablets have bounded pixels, geometry and frame work", () => {
+  for (const device of [{width:393,coarsePointer:true},{width:1194,coarsePointer:true},{width:600}]) {
+    const profile=cityRenderPolicy(device);
+    assert.equal(profile.compact,true);
+    assert.equal(profile.shadows,false);
+    assert.equal(profile.frameMs,1000/30);
+    assert.equal(profile.surfaceResolution,12);
+    assert.equal(profile.waterDetail,8);
+    const ratio=renderPixelRatio(profile,device.width,852,3);
+    assert.ok(device.width*852*ratio**2<=650001);
+    assert.ok(ratio<=1);
+  }
+  const desktop=cityRenderPolicy({width:1440});
+  assert.equal(desktop.shadows,true);
+  assert.equal(desktop.surfaceResolution,24);
+});
 
 import {
   AMBIENT_DELIVERY_COUNT,
@@ -42,11 +60,41 @@ import { OCEAN_WAVES, coastXAt } from "../client/ocean.js";
 import { createContinuations, continuationPoint, continuationDistance, visibleChunkKeys, createSurfaceTile, WorldStream } from "../client/world-stream.js";
 import { createBoulevard, roadStrip, continuousRail, RAIL_SPACING } from "../client/transport.js";
 import { batchStaticScenery } from "../client/render-batch.js";
+import { createFrontage } from "../client/frontage.js";
+import { MapTapGesture, clampMapLabel } from "../client/interaction.js";
 import { railSchedule, portSchedule, createHarborApproach } from "../client/city-life.js";
 import { SIGNAL_JUNCTION, advanceCityTraffic, signalPhase, vehiclePose, vehiclesOverlap, laneCurve } from "../client/city-traffic.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const topology = JSON.parse(readFileSync(new URL("../config/public-topology.json", import.meta.url), "utf8"));
+
+test("frontages terminate at the actual straight or circular kerb without intruding into asphalt",()=>{
+  const perimeter=createPerimeterBands(createPlotLayout(topology)),plan=createRegionalPlan(perimeter,createTransitCurves(perimeter).coastline);
+  for(const house of plan.houses){
+    const bounds={min:{x:house.x-1.2,z:house.z-1.2},max:{x:house.x+1.2,z:house.z+1.2}};
+    const f=createFrontage(house,plan.harbor.z,bounds),dx=f.end.x-f.start.x,dz=f.end.z-f.start.z,length=Math.hypot(dx,dz);
+    assert.ok(length>0 && length<4);
+    for(let step=0;step<=20;step++)for(const side of [-1,0,1]){
+      const x=f.start.x+dx*step/20-dz/length*f.width/2*side;
+      const z=f.start.z+dz*step/20+dx/length*f.width/2*side;
+      const onStreet=x>=-11.5 && x<=plan.harbor.x-2.8 && Math.abs(z-plan.harbor.z)<.86-1e-6;
+      const inBulb=Math.hypot(x+11.5,z-plan.harbor.z)<1.65-1e-6;
+      assert.equal(onStreet||inBulb,false,`asphalt overlap for ${house.key}`);
+    }
+  }
+  assert.ok(plan.station.x>perimeter.rail.x,"station must face the city");
+  assert.ok(plan.station.x+.6<perimeter.bounds.minX-1.91,"platform must clear boulevard");
+  assert.ok(plan.walks.length>=3);
+});
+
+test("map gesture classification rejects drags, pinches and cancelled pointers",()=>{
+  const g=new MapTapGesture(),event=(id,x=0)=>({pointerId:id,clientX:x,clientY:0,pointerType:"touch",button:0,target:null});
+  g.down(event(1));assert.equal(g.up(event(1)).tap,true);
+  g.down(event(1));g.move(event(1,20));assert.equal(g.up(event(1,0)).tap,false,"returning to start is still a drag");
+  g.down(event(1));g.down(event(2));assert.equal(g.up(event(1)),null);assert.equal(g.up(event(2)).tap,false);
+  g.down(event(1));assert.equal(g.up(event(1),true).tap,false);
+  assert.deepEqual(clampMapLabel(-100,900,130,44,390,844),{x:77,y:712});
+});
 
 test("station timetable dwells for boarding and preserves separation from freight",()=>{
   const length=170,station=80;
