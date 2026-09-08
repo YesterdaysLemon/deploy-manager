@@ -1842,20 +1842,8 @@ export class City3D {
   }
 
   async addEntity(entity, generation) {
-    const isDocker = entity.id === "docker";
-    let model;
-    try {
-      model = await buildServiceCampus(entity, (key, dimensions) => this.cloneAsset(key, dimensions));
-    } catch {
-      model = new THREE.Group();
-      addOutlinedBox(
-        model,
-        new THREE.Vector3(3.3, 2.5, 3.3),
-        new THREE.Vector3(0, 1.25, 0),
-        new THREE.MeshStandardMaterial({ color: COLORS.paperLight, roughness: 1 }),
-      );
-    }
-    if (generation !== this.worldGeneration) return;
+    const model = await buildServiceCampus(entity, (key, dimensions) => this.cloneAsset(key, dimensions));
+    if (generation !== this.worldGeneration) {disposeObject3D(model);return;}
 
     const group = new THREE.Group();
     group.name = `entity:${entity.id}`;
@@ -1864,13 +1852,6 @@ export class City3D {
     model.position.y = 0.02;
     group.add(model);
 
-    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(2.42, 2.46, .045, 32),
-      new THREE.MeshStandardMaterial({color:0xabc88d,roughness:1}));
-    pedestal.position.y=-.05;
-    group.add(pedestal);
-    pedestal.userData.entityId = entity.id;
-
-    if (isDocker) await this.addDockerCargo(group, generation);
     const bounds = new THREE.Box3().setFromObject(group);
     const height = Math.max(2.1, bounds.max.y - group.position.y);
     const labelElement = createTextLabel(entity);
@@ -1900,6 +1881,7 @@ export class City3D {
     this.world.add(group);
     this.entityGroups.set(entity.id, group);
     healthScenery(group);
+    group.userData.healthBarrier.rotation.y=model.rotation.y+Math.PI;
     if (entity.modelKey.startsWith("industrial/building-e") || entity.modelKey.startsWith("industrial/building-m")) {
       this.addSmoke(group, height);
     }
@@ -1933,7 +1915,8 @@ export class City3D {
     // Vacant land becomes a bounded network of parks, not empty concrete lots.
     const infill=planTownInfill(layout,GHOST_MODEL_KEYS.length);
     for (const {cell,variant,neighbor} of infill) {
-      const park=buildPocketPark(cell,variant);park.userData.neighbor=neighbor;
+      const park=await buildPocketPark(cell,variant,(key,fit)=>this.cloneAsset(key,fit));park.userData.neighbor=neighbor;
+      if(generation!==this.worldGeneration){disposeObject3D(park);return;}
       this.world.add(park);
     }
     this.stage.dataset.pocketParks=String(infill.length);

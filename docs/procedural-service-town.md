@@ -1,59 +1,44 @@
-# Procedural service town
+# Kenney-first service town
 
-`client/service-town.js` composes the public fleet into a small coastal town.
-The existing `/api/topology` subscription still owns the service inventory,
-health, selection, and release receipts. Public route identity and kind choose
-eleven architecture families: town hall, gatehouse, workshop, observatory,
-aquarium, conservatory, castle, laboratory, studio, village, and reservoir.
-Datastores use the reservoir family; control services keep their fixed civic plots.
+The town uses original Kenney buildings, trees, fences, planters, parasols and
+stone paths. Procedural generation chooses and places those assets; it does
+not replace them with handmade buildings, change their textures, or add
+intersecting roof ornaments. The authored palettes and proportions remain intact.
 
-The identity seed determines roof color, height, house variant, planting, and
-props. Buildings face the existing street toward the center. Explicit topology
-plot addresses are preserved; the existing deterministic allocator places
-unassigned services. Health changes do not reroll architecture. Existing status
-beacons, closure barriers, selection, and release animations remain attached to
-the same service entity. Architecture is illustrative, not measured CPU, RAM,
-traffic, or deployment activity.
+`client/service-town.js` maps public service identity to the existing industrial,
+commercial and suburban asset pools. The manager keeps its Kenney tower, storage
+keeps the authored tank, and smaller services use varied pitched-roof houses.
+Identity seeds survive health changes and topology reorder. The public topology
+continues to own the fleet inventory, explicit plots, statuses and release events.
 
-Vacant plots beyond the three setup invitation plots become pocket parks,
-gardens, orchards, pavilions, or playgrounds. Their coordinate seeds survive
-topology reordering; the nearest service influences the landscape (for example,
-water features near the aquarium). At most 64 such plots are populated. Campus
-geometry stays inside a 4.96-unit square, clear of the existing 5.25-unit lot's
-kerb. Animated traffic, the coastline, regional terrain, and loaded road/rail
-geometry continue using their existing reservations and movement systems.
+Every campus loads its primary building first and measures its actual Three.js
+bounds. It reserves that footprint and a clear street-facing access corridor.
+Each prop is then measured, checked against the lot boundary, and accepted only
+if it clears all existing footprints by at least 0.12 world units. Full roof
+eaves and tree canopies count. Optional props that do not fit are omitted.
+Docker cargo uses the same allocator instead of being overlaid afterward.
+Closure barriers rotate with the frontage. The former circular pedestal and
+procedural architectural primitives are removed.
 
-The procedural palette is baked into vertex colors, giving the authored shapes
-one matte draw plus one glass draw per campus. Original Kenney GLBs keep their
-textures. Scenery batching, per-service picking, and release animation ownership
-remain separate. The mobile 30 Hz / 650,000-pixel policy is retained. One current
-15-entity fleet sample at 390×844 reported 704 draws and 212,185 triangles,
-compared with 585 draws and 174,773 triangles for the prior public scene at the
-same viewport. The additional scenery has a cost; these are browser samples,
-not physical-phone FPS or thermal measurements.
+Vacant land uses at most 64 seeded Kenney gardens or paired-house plots. Trees,
+planters, café parasols, paths and houses share the same clearance allocator.
+These are ambient neighborhoods, not extra running services. Original terrain,
+roads, railway, shipping, release animations and service controls are preserved.
+The existing phone pixel/frame budget and static scenery batching remain active.
 
-## Additional pack assets
+## Assets
 
-Twelve original CC0 GLBs were recovered from the already-downloaded Kenney City
-Kit Suburban 2.0 and Commercial 2.1 packs. The added files total 697,776 bytes.
-Existing kit licenses and adjacent palette textures apply. The public server
-explicitly serves every added file; no directory browsing was introduced.
-
-- Suburban: `building-type-c/f/i/k/p/u`, `planter`, `path-stones-long`, `fence-low`.
-- Commercial: `detail-parasol-a/b`, `detail-awning`.
-
-The six houses form the deterministic village pool; only the variants needed by
-the current fleet are loaded. Current-fleet inspection confirmed house k/p/u,
-both parasols, planter, stone path, fence, and the animator's awning loaded with
-no asset warnings. Other house variants are available for future service seeds.
+The twelve additional CC0 GLBs (697,776 bytes) come from the already-downloaded
+City Kit Suburban 2.0 and Commercial 2.1 packs. Existing kit licenses and adjacent
+palette textures apply. Six house variants form the procedural housing pool.
+The detached awning is retained in the curated asset list but is not attached
+arbitrarily to buildings. Every model has an explicit server asset route.
 
 ## Validation
 
-55 Node tests cover existing deployment safeguards and city behavior, plus
-identity stability, architecture selection, all four frontages, campus bounds,
-batch count, and bounded vacant-land placement. Seven browser checks cover
-desktop/mobile visual snapshots, keyboard selection, factual release receipts,
-tap details, drag rejection, pinch zoom, and the phone rendering policy.
-The local current-fleet preview uses a captured sanitized public topology;
-local probes are disabled so unrelated local ports are not presented as live
-production service checks. Production polling behavior is unchanged.
+55 Node tests and seven browser checks pass. Placement tests parse actual GLB
+geometry with textures omitted only in the Node test loader; production uses
+the original textures. The tests check campus bounds in all four orientations,
+pairwise prop/building clearance, a bounded infill budget, and reorder stability.
+Desktop and mobile visual inspection uses a captured sanitized public fleet.
+Local probes are disabled; production topology polling is unchanged.

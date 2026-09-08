@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { batchStaticScenery } from "./render-batch.js";
-import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+
 
 // Architecture is an illustration of public service identity, never a resource
 // utilization measurement. Identity seeds survive health polls and route ordering.
@@ -40,14 +40,17 @@ export function planServiceLot(entity) {
   const seed = townHash(entity.id);
   const district = serviceDistrict(entity);
   const house = ["c", "f", "i", "k", "p", "u"][seed % 6];
-  const palette = [0xd47c62, 0x71a99c, 0xd9ae60, 0x8c9fbb, 0xae87a1][seed % 5];
   // Every plot fronts an existing street toward the town center.
   const rotation = Math.abs(entity.x ?? 0) > Math.abs(entity.z ?? 0)
     ? (entity.x > 0 ? -Math.PI / 2 : Math.PI / 2)
     : (entity.z > 0 ? Math.PI : 0);
-  return { seed, district, house, palette, rotation,
-    height: 1.65 + (seed % 4) * .24,
-    trees: district === "conservatory" ? 5 : 3,
+  const buildings={townhall:'commercial/skyscraper-e',gatehouse:'commercial/building-a',
+    workshop:entity.modelKey?.startsWith('industrial/')?entity.modelKey:'industrial/building-p',
+    observatory:'commercial/building-n',aquarium:'suburban/building-h',conservatory:'suburban/building-r',
+    castle:'town/house-u',laboratory:'industrial/building-c',studio:'town/house-i',
+    village:`town/house-${house}`,reservoir:'industrial/tank'};
+  return { seed, district, house, rotation, buildingKey:buildings[district],
+    height: entity.id==='deploy-manager'?6.4:4.4,
     props: ["town/planter", "town/stones", "town/fence", seed % 2 ? "town/parasol-a" : "town/parasol-b"],
   };
 }
@@ -63,191 +66,69 @@ export function planTownInfill(layout, reserved = 3) {
   });
 }
 
-function builder(group, accent) {
-  const colors = {wall:0xf4e5c5,roof:accent,trim:0xfcf3dc,wood:0x846454,glass:0x73bfc1,
-    leaf:0x68a579,lightLeaf:0xb3c779,path:0xe1ceb0,metal:0x45666c,water:0x63bcbf,flower:0xe99baa};
-  const materials = Object.fromEntries(Object.entries(colors).map(([key,color])=>{
-    const material=new THREE.MeshStandardMaterial({color,roughness:key === "glass"?.3:.85});
-    material.userData.townMaterial=true;return [key,material];
-  }));
-  const mesh = (geometry, material, x,y,z) => {
-    const node = new THREE.Mesh(geometry,materials[material]);
-    node.position.set(x,y,z);node.castShadow=true;node.receiveShadow=true;group.add(node);return node;
-  };
-  const box = (w,h,d,x,y,z,m="wall") => mesh(new THREE.BoxGeometry(w,h,d),m,x,y,z);
-  const cylinder = (r,h,x,y,z,m="wall",top=r,sides=16) => mesh(new THREE.CylinderGeometry(top,r,h,sides),m,x,y,z);
-  const ball = (r,x,y,z,m="leaf",sy=1) => {const n=mesh(new THREE.IcosahedronGeometry(r,1),m,x,y,z);n.scale.y=sy;return n;};
-  const dome = (r,x,y,z,m="roof") => mesh(new THREE.SphereGeometry(r,20,10,0,Math.PI*2,0,Math.PI/2),m,x,y,z);
-  const roof = (w,h,d,x,y,z) => {
-    const shape=new THREE.Shape();shape.moveTo(-w/2,0);shape.lineTo(0,h);shape.lineTo(w/2,0);shape.closePath();
-    const geometry=new THREE.ExtrudeGeometry(shape,{depth:d,bevelEnabled:false});geometry.translate(0,0,-d/2);
-    return mesh(geometry,"roof",x,y,z);
-  };
-  const tree=(x,z,size=1)=>{cylinder(.075,.65*size,x,.33*size,z,"wood");ball(.42*size,x,.98*size,z,"leaf",1.35);ball(.28*size,x+.15,.86*size,z+.08,"lightLeaf");};
-  const windows=(w,h,d,x,z)=>{
-    for(let level=.6;level<h-.15;level+=.65) for(let col=-w/2+.35;col<w/2-.15;col+=.56){
-      box(.25,.31,.035,x+col,level,z+d/2+.015,"glass");box(.25,.31,.035,x+col,level,z-d/2-.015,"glass");
-    }
-    for(let level=.6;level<h-.15;level+=.65)for(let col=-d/2+.35;col<d/2-.15;col+=.56){
-      box(.035,.31,.25,x+w/2+.015,level,z+col,"glass");box(.035,.31,.25,x-w/2-.015,level,z+col,"glass");
-    }
-  };
-  return {mesh,box,cylinder,ball,dome,roof,tree,windows,materials};
+export function footprintsOverlap(a,b,gap=.12) {
+  return a.minX < b.maxX+gap && a.maxX > b.minX-gap && a.minZ < b.maxZ+gap && a.maxZ > b.minZ-gap;
 }
 
-// Bake the small procedural palette into vertex colors. One matte draw and one
-// glass draw per campus replace dozens of separately colored primitive draws.
-function batchTownGeometry(group) {
-  group.updateMatrixWorld(true);
-  const inverse=group.matrixWorld.clone().invert(),buckets=new Map();
-  group.traverse(node=>{
-    if(!node.isMesh || !node.material?.userData.townMaterial)return;
-    const roughness=node.material.roughness;
-    if(!buckets.has(roughness))buckets.set(roughness,[]);
-    buckets.get(roughness).push(node);
-  });
-  for(const [roughness,nodes] of buckets){
-    const parts=nodes.map(node=>{
-      const geometry=node.geometry.index?node.geometry.toNonIndexed():node.geometry.clone();
-      geometry.applyMatrix4(inverse.clone().multiply(node.matrixWorld));
-      const color=node.material.color,colors=new Float32Array(geometry.attributes.position.count*3);
-      for(let i=0;i<colors.length;i+=3){colors[i]=color.r;colors[i+1]=color.g;colors[i+2]=color.b;}
-      geometry.setAttribute('color',new THREE.BufferAttribute(colors,3));return geometry;
-    });
-    const merged=mergeGeometries(parts);
-    for(const part of parts)part.dispose();
-    if(!merged)throw new Error('Unable to batch procedural town geometry');
-    const draw=new THREE.Mesh(merged,new THREE.MeshStandardMaterial({vertexColors:true,roughness}));
-    draw.castShadow=true;draw.receiveShadow=true;draw.name='town-palette-batch';
-    for(const node of nodes){node.removeFromParent();node.geometry.dispose();}
-    for(const material of new Set(nodes.map(n=>n.material)))material.dispose();
-    group.add(draw);
-  }
+function footprint(object) {
+  const b=new THREE.Box3().setFromObject(object);
+  return {minX:b.min.x,maxX:b.max.x,minZ:b.min.z,maxZ:b.max.z};
 }
 
-function landmark(group, plan) {
-  const b=builder(group,plan.palette),{box,cylinder,ball,dome,roof,tree,windows,mesh}=b;
-  const h=plan.height;
-  if (["townhall","studio","laboratory","workshop"].includes(plan.district)) {
-    box(2.15,h,1.65,-.28,h/2,-.25);roof(2.4,.75,1.94,-.28,h,-.25);windows(2.15,h,1.65,-.28,-.25);
-    box(.4,.7,.045,-.28,.36,.59,"wood");
-    box(.8,.62,1.08,1.13,.31,-.39);roof(1,.4,1.28,1.13,.62,-.39);
-    if(plan.district==="townhall") {
-      box(.85,3.75,.85,.42,1.875,-.4);roof(1.08,.65,1.08,.42,3.75,-.4);
-      const clock=cylinder(.28,.045,.42,3.27,.05,"trim");clock.rotation.x=Math.PI/2;
-      box(.025,.19,.055,.42,3.32,.095,"metal");box(.16,.025,.055,.49,3.27,.095,"metal");
-    } else if (plan.district==="laboratory") {
-      dome(.67,-.65,h+.39,-.25,"glass");cylinder(.035,.8,1.12,1.37,-.39,"metal");ball(.1,1.12,1.81,-.39,"roof");
-    } else if (plan.district==="workshop") {
-      cylinder(.18,2.75,1.22,1.375,-.75,"roof");cylinder(.23,.17,1.22,2.73,-.75,"trim");
-    } else if (plan.district==="studio") {
-      box(1.25,.55,.12,-.28,1.3,.67,"roof");
-      for(let i=0;i<5;i++)ball(.055,-.8+i*.26,1.08,.76,"trim");
-    }
-  } else if (["observatory","aquarium","conservatory"].includes(plan.district)) {
-    cylinder(1.23,1.05,-.28,.525,-.3,"wall");
-    dome(1.29,-.28,1.05,-.3,plan.district==="observatory"?"roof":"glass");
-    cylinder(1.3,.1,-.28,1.06,-.3,"trim");
-    for(let i=0;i<8;i++) {
-      const angle=i*Math.PI/4;
-      cylinder(.055,1.04,-.28+Math.cos(angle)*1.22,.56,-.3+Math.sin(angle)*1.22,"trim");
-    }
-    if(plan.district==="observatory") {
-      const scope=cylinder(.17,1.1,-.28,2.23,-.12,"metal");scope.rotation.x=.75;
-      ball(.3,-.28,1.95,-.3,"trim");
-    } else {
-      for(let meridian=0;meridian<5;meridian++) {
-        const points=[];
-        for(let step=0;step<=12;step++){
-          const theta=step*Math.PI/12,angle=meridian*Math.PI/5;
-          points.push(new THREE.Vector3(-.28+Math.cos(theta)*Math.cos(angle)*1.3,1.05+Math.sin(theta)*1.3,-.3+Math.cos(theta)*Math.sin(angle)*1.3));
-        }
-        mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points),16,.026,5,false),"trim",0,0,0);
-      }
-      for(let i=0;i<4;i++)ball(.25,-.95+i*.43,.83,-.35,"leaf");
-      dome(.62,1.26,.48,.18,"glass");cylinder(.6,.48,1.26,.24,.18);
-    }
-  } else if (plan.district==="castle" || plan.district==="gatehouse") {
-    box(1.8,1.35,1.25,0,.675,-.45);roof(2.04,.65,1.5,0,1.35,-.45);
-    for(const x of [-1.13,1.13]){
-      cylinder(.43,2.35,x,1.175,-.35);cylinder(.58,.85,x,2.775,-.35,"roof",0);
-      box(.17,.45,.045,x,1.65,.085,"glass");
-    }
-    box(.65,.75,.045,0,.38,.2,"wood");
-    const arch=mesh(new THREE.TorusGeometry(.34,.10,6,12,Math.PI),"trim",0,.74,.24);
-    arch.rotation.z=0;
-    cylinder(.025,.8,1.13,3.53,-.35,"metal");box(.46,.25,.035,1.34,3.73,-.35,"roof");
-  } else if (plan.district==="reservoir") {
-    for(const x of [-.85,.85]){
-      for(const z of [-.65,.65])cylinder(.08,1.3,x,.65,z,"wood");
-      cylinder(.68,1.15,x,1.68,0,"glass");dome(.71,x,2.25,0,"roof");
-    }
+// All placed objects are original Kenney models. Reserve their full measured
+// bounds, including roof eaves and tree canopies, plus a pedestrian corridor.
+async function placeAsset(group, cloneAsset, spec, occupied, required=false) {
+  const model=await cloneAsset(spec.key,{width:spec.w,depth:spec.d,height:spec.h});
+  model.position.set(spec.x,0,spec.z);model.rotation.y=spec.rotation??0;
+  const bounds=footprint(model);
+  const inside=bounds.minX>=-2.45 && bounds.maxX<=2.45 && bounds.minZ>=-2.45 && bounds.maxZ<=2.45;
+  if(!inside || occupied.some(other=>footprintsOverlap(bounds,other))) {
+    if(required)throw new Error(`Building ${spec.key} does not fit its reserved plot`);
+    return null;
   }
-  // Human-scale, asymmetric gardens leave the front door and streets clear.
-  for(let i=0;i<plan.trees;i++) {
-    const x=i<2?-1.92:1.9,z=i<2?-.9+i*1.6:-1.48+(i-2)*.85;
-    tree(x,z,.72+(plan.seed+i)%3*.12);
-  }
-  for(const x of [-1.3,1.32]) {
-    box(.56,.14,.38,x,.07,1.8,"wood");
-    for(let j=0;j<3;j++)ball(.105,x-.18+j*.18,.2,1.8,"flower");
-  }
-  box(.43,.035,1.35,0,.025,1.47,"path");
-  group.userData.district=plan.district;
-  return b;
+  group.add(model);occupied.push({...bounds,key:spec.key});return model;
 }
 
-export async function buildServiceCampus(entity, cloneAsset) {
-  const plan=planServiceLot(entity),group=new THREE.Group();
-  group.name=`campus:${entity.id}:${plan.district}`;
-  landmark(group,plan);
-  // Actual curated Kenney pieces, with original proportions and palette textures.
-  const specs=[
-    {key:"town/planter",x:-1.17,z:1.2,w:.52,d:.4,h:.6},
-    {key:"town/stones",x:0,z:1.77,w:.42,d:1.1,h:.05},
-    {key:"town/fence",x:-.9,z:-2.13,w:2.05,d:.13,h:.48},
-    {key:plan.props[3],x:1.43,z:1.28,w:.88,d:.88,h:.95},
+export async function buildServiceCampus(entity,cloneAsset) {
+  const plan=planServiceLot(entity),group=new THREE.Group(),occupied=[];
+  group.name=`campus:${entity.id}:${plan.buildingKey}`;
+  const building=await placeAsset(group,cloneAsset,{key:plan.buildingKey,w:3.25,d:2.85,h:plan.height,x:0,z:-.35},occupied,true);
+  const front=footprint(building).maxZ;
+  const entrance={minX:-.42,maxX:.42,minZ:front+.14,maxZ:2.45,key:'reserved entrance'};
+  // This corridor stays empty: no decorative path crosses an authored doorstep,
+  // driveway, garage or wall. The original building keeps its own entrance.
+  occupied.push(entrance);
+  const props=[
+    {key:'town/fence',w:3.6,d:.12,h:.46,x:0,z:-2.27},
+    {key:'suburban/tree-small',w:.55,d:.55,h:1.45,x:-2.08,z:-.7},
+    {key:'suburban/tree-small',w:.55,d:.55,h:1.2,x:2.08,z:.25},
+    {key:plan.props[3],w:.95,d:.95,h:1.1,x:1.55,z:1.72},
+    {key:'town/planter',w:.6,d:.5,h:.58,x:-1.5,z:1.8},
   ];
-  if(plan.district==="village") specs.push({key:`town/house-${plan.house}`,x:-.18,z:-.35,w:2.9,d:2.4,h:3.2});
-  if(plan.district==="studio") specs.push({key:"town/awning",x:-.28,z:.86,y:.9,w:1.45,d:.55,h:.38});
-  await Promise.all(specs.map(async p=>{
-    const prop=await cloneAsset(p.key,{width:p.w,depth:p.d,height:p.h});
-    prop.position.set(p.x,p.y??.02,p.z);group.add(prop);
-  }));
-  // Merge within each interactive entity, preserving picking and release animation.
-  batchTownGeometry(group);batchStaticScenery(group);
-  group.rotation.y=plan.rotation;
+  // Cargo has reserved slots too; it can never be layered over a factory.
+  if(entity.id==='docker')props.splice(3,1,{key:'industrial/container-a',w:.85,d:.9,h:.65,x:1.55,z:1.72});
+  for(const spec of props)await placeAsset(group,cloneAsset,spec,occupied);
+  group.userData={district:plan.district,buildingKey:plan.buildingKey,footprints:occupied};
+  batchStaticScenery(group);group.rotation.y=plan.rotation;
   return group;
 }
 
-export function buildPocketPark(cell, index) {
-  const group=new THREE.Group();group.name=`pocket-park:${cell.col}:${cell.row}`;
-  const b=builder(group,0xd78978),{box,cylinder,ball,tree}=b;
-  if(index===0) {
-    cylinder(1,.1,0,.055,0,"path");cylinder(.79,.11,0,.12,0,"water");cylinder(.2,.36,0,.24,0,"trim");ball(.22,0,.51,0,"water");
-  } else if(index===1) {
-    for(const x of [-.9,.9]) for(const z of [-.65,.65]){
-      box(.75,.1,.7,x,.05,z,"wood");for(let i=0;i<3;i++)ball(.16,x-.24+i*.24,.22,z,"flower");
-    }
-  } else if(index===2) {
-    cylinder(1.03,.16,0,.1,0,"path",1.03,6);cylinder(1.18,.65,0,1.65,0,"roof",0,6);
-    for(let i=0;i<6;i++){const a=i*Math.PI/3;cylinder(.055,1.25,Math.cos(a)*.82,.8,Math.sin(a)*.82,"wood");}
-  } else if(index===3) {
-    // A small orchard, with staggered trees instead of another building pad.
-    for(const [x,z] of [[-.7,-.7],[.7,-.3],[-.65,.8],[.8,.95]])tree(x,z,.82);
-  } else {
-    // A little playground: timber swing frame and a sloping slide.
-    for(const x of [-.72,.72]) {
-      const post=cylinder(.055,1.55,x,.77,0,"wood");post.rotation.z=x*.12;
-    }
-    box(1.65,.09,.09,0,1.55,0,"wood");
-    for(const x of [-.2,.2])cylinder(.016,.84,x,1.07,0,"metal");
-    box(.52,.07,.27,0,.62,0,"roof");
-    const slide=box(.42,.045,1.2,1.15,.48,-.7,"roof");slide.rotation.x=-.65;
-    box(.55,.08,.42,1.15,.88,-1.28,"wood");
-  }
-  for(const [x,z] of [[-1.75,-1.45],[1.75,1.5],[-1.65,1.45]])tree(x,z,.9);
-  for(const z of [-1.52,1.52]){box(.85,.1,.24,0,.3,z,"wood");box(.85,.28,.07,0,.48,z+.1,"wood");}
-  box(.48,.028,4.8,0,.014,0,"path");
-  batchTownGeometry(group);batchStaticScenery(group);group.position.set(cell.x,.12,cell.z);return group;
+export async function buildPocketPark(cell,index,cloneAsset) {
+  const group=new THREE.Group(),occupied=[];
+  group.name=`kenney-garden:${cell.col}:${cell.row}`;
+  await placeAsset(group,cloneAsset,{key:'town/stones',w:.6,d:4.6,h:.08,x:0,z:0},occupied,true);
+  const placements=(index===2 || index===4)
+    ? [{key:index===2?'town/house-f':'town/house-c',w:1.6,d:2.5,h:2.8,x:-1.3,z:-.4},
+       {key:index===2?'town/house-p':'town/house-k',w:1.6,d:2.5,h:2.8,x:1.3,z:-.4},
+       {key:'town/planter',w:.65,d:.5,h:.5,x:-1.3,z:1.9},
+       {key:'suburban/tree-small',w:.75,d:.75,h:1.4,x:1.3,z:1.9}]
+    : index%2===0
+    ? [{key:'suburban/tree',w:1.1,d:1.1,h:2.2,x:-1.3,z:-1.1},
+       {key:'suburban/tree-small',w:.85,d:.85,h:1.5,x:1.35,z:1.15},
+       {key:'town/parasol-a',w:1,d:1,h:1.1,x:1.35,z:-1.15},
+       {key:'town/planter',w:.8,d:.5,h:.6,x:-1.3,z:1.25}]
+    : [-1.35,1.35].flatMap(x=>[-1.3,0,1.3].map(z=>({key:index===3?'suburban/tree-small':'town/planter',w:.8,d:.72,h:index===3?1.5:.65,x,z})));
+  for(const spec of placements)await placeAsset(group,cloneAsset,spec,occupied);
+  group.userData.footprints=occupied;
+  batchStaticScenery(group);group.position.set(cell.x,.12,cell.z);return group;
 }
