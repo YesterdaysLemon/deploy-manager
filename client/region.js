@@ -208,14 +208,14 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
   const lamps=[];
   for(const axis of ["x","z"])for(let index=0;index<3;index++) {
     const hex=[0xe96b4f,0xe7ba51,0x53d4a7][index];
-    const mesh=new THREE.InstancedMesh(new THREE.SphereGeometry(.065,6,5),new THREE.MeshBasicMaterial({color:hex}),sites.length*2);
+    const mesh=new THREE.InstancedMesh(new THREE.SphereGeometry(.065,6,5),new THREE.MeshBasicMaterial({color:0xffffff}),sites.length*2);
     sites.forEach((p,i)=>[-1,1].forEach((sign,j)=>{
       transform.position.set(p.x+(axis==="x"?sign*.27:0),.2-index*.2,p.z+(axis==="z"?sign*.27:0));
       transform.rotation.set(0,0,0);transform.updateMatrix();mesh.setMatrixAt(i*2+j,transform.matrix);
     }));
-    signal.add(mesh);lamps.push({mesh,hex,axis,color:["red","amber","green"][index]});
+    signal.add(mesh);lamps.push({mesh,lit:new THREE.Color(hex),dim:new THREE.Color(0x263c38),states:new Int8Array(sites.length).fill(-1),axis,color:["red","amber","green"][index]});
   }
-  city.signalFixtures.push({group:signal,lamps});
+  city.signalFixtures.push({group:signal,lamps,sites});
   city.stage.dataset.signalJunctions=String(sites.length);
   const roadSource = await city.cloneAsset("roads/straight", {width:1,depth:1,exact:true});
   if (generation !== city.worldGeneration) return;

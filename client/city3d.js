@@ -2631,10 +2631,18 @@ export class City3D {
       this.lastTrafficAudit=frameTime;
     }
     for(const fixture of this.signalFixtures??[]) {
-      const phase=signalPhase(motionElapsed);
+      const phases=fixture.sites.map(site=>signalPhase(motionElapsed,site));
       fixture.group.position.y=2.85+(this.reducedMotion?0:Math.sin(motionElapsed*1.2)*.045);
       for(const lamp of fixture.lamps) {
-        const lit=phase[lamp.axis]===lamp.color;lamp.mesh.material.color.setHex(lit?lamp.hex:0x263c38);
+        let changed=false;
+        phases.forEach((phase,i)=>{
+          const lit=Number(phase[lamp.axis]===lamp.color);
+          if(lamp.states[i]===lit)return;
+          lamp.states[i]=lit;changed=true;
+          lamp.mesh.setColorAt(i*2,lit?lamp.lit:lamp.dim);
+          lamp.mesh.setColorAt(i*2+1,lit?lamp.lit:lamp.dim);
+        });
+        if(changed)lamp.mesh.instanceColor.needsUpdate=true;
       }
     }
 

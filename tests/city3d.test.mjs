@@ -63,7 +63,7 @@ import { batchStaticScenery } from "../client/render-batch.js";
 import { createFrontage } from "../client/frontage.js";
 import { MapTapGesture, clampMapLabel } from "../client/interaction.js";
 import { railSchedule, portSchedule, createHarborApproach } from "../client/city-life.js";
-import { SIGNAL_JUNCTION, advanceCityTraffic, signalPhase, vehiclePose, vehiclesOverlap, laneCurve } from "../client/city-traffic.js";
+import { SIGNAL_JUNCTION, advanceCityTraffic, signalPhase, signalOffset, vehiclePose, vehiclesOverlap, laneCurve } from "../client/city-traffic.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const topology = JSON.parse(readFileSync(new URL("../config/public-topology.json", import.meta.url), "utf8"));
@@ -651,13 +651,13 @@ test('expanded junctions stop on red and slow-frame substeps preserve traffic ti
   const junction={x:20.91,z:13.94,key:'outer',signaled:true};
   const make=()=>({curve:new THREE.LineCurve3(new THREE.Vector3(junction.x-8,.2,junction.z+.42),new THREE.Vector3(junction.x+8,.2,junction.z+.42)),once:true,speed:1,offset:0,cityDistance:0,cruiseSpeed:1,bodyWidth:.7,bodyLength:1.5});
   const red=make();
-  for(let i=0;i<100;i++)advanceCityTraffic([red],.1,10,[],[junction]);
+  for(let i=0;i<100;i++)advanceCityTraffic([red],.1,28-signalOffset(junction),[],[junction]);
   assert.ok(vehiclePose(red,red.cityDistance).x+red.bodyLength/2<=junction.x-1.2);
   const slow=make(),fast=make();
   for(let i=0;i<30;i++)advanceCityTraffic([slow],.1,(i+1)*.1,[],[]);
   for(let i=0;i<180;i++)advanceCityTraffic([fast],1/60,(i+1)/60,[],[]);
   assert.ok(Math.abs(slow.cityDistance-fast.cityDistance)<1e-8);
-  for(let i=0;i<80;i++)advanceCityTraffic([red],.1,3,[],[junction]);
+  for(let i=0;i<80;i++)advanceCityTraffic([red],.1,39-signalOffset(junction),[],[junction]);
   assert.ok(vehiclePose(red,red.cityDistance).x>junction.x+2);
 });
 
@@ -675,4 +675,21 @@ test('coarse phone terrain triangles stay below the railway and highway',()=>{
     assert.ok(hit && hit.point.y<point.y-.02,`terrain buried transport at ${point.x},${point.z}`);
   }
   for(const mesh of tiles.values())mesh.geometry.dispose();material.dispose();
+});
+
+
+test('neighboring junctions have stable distinct signal schedules with safe clearance',()=>{
+  const layout=createPlotLayout(topology),sites=layout.streets.junctions.filter(j=>j.signaled);
+  assert.ok(new Set(sites.map(signalOffset)).size>=6);
+  for(let time=0;time<36;time+=.25) {
+    const phases=sites.map(site=>signalPhase(time,site));
+    assert.ok(new Set(phases.map(p=>`${p.x}:${p.z}`)).size>=2,'whole city switched together');
+    for(const phase of phases)assert.ok(!(phase.x==='green' && phase.z==='green'));
+  }
+  for(const site of sites) {
+    const offset=signalOffset(site);
+    assert.deepEqual(signalPhase(26.5-offset,site),{x:'red',z:'red'});
+    assert.equal(signalPhase(25-offset,site).x,'amber');
+    assert.deepEqual(signalPhase(3,site),signalPhase(3,{...site,key:'reordered'}));
+  }
 });

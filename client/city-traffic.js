@@ -2,8 +2,15 @@ import * as THREE from "three";
 export const SIGNAL_JUNCTION=Object.freeze({x:-6.97,z:-6.97});
 const JUNCTIONS=[-6.97,0,6.97].flatMap(x=>[-6.97,0,6.97].map(z=>({x,z,key:`${x}:${z}`})));
 
-export function signalPhase(time) {
-  const phase = ((time % 18) + 18) % 18;
+// Fixed geographic offsets survive rebuilding and topology polling. Adjacent
+// streets advance by different amounts instead of switching the whole town.
+export function signalOffset(junction) {
+  return ((Math.round(junction.x/6.97)*5+Math.round(junction.z/6.97)*7)%18+18)%18;
+}
+
+export function signalPhase(time, junction = null) {
+  const localTime=time+(junction?signalOffset(junction):0);
+  const phase = ((localTime % 18) + 18) % 18;
   if (phase < 6) return {x:"green",z:"red"};
   if (phase < 8) return {x:"amber",z:"red"};
   if (phase < 9) return {x:"red",z:"red"};
@@ -57,7 +64,6 @@ export function advanceCityTraffic(items, delta, time, obstacles=[], junctions=J
     }
     if(item.cityDistance!==undefined)active.push(item);
   }
-  const phases=signalPhase(time);
   const poses=new Map(active.map(item=>[item,vehiclePose(item,item.cityDistance)]));
   const owners=new Map(),approaches=new Map();
   for(const item of active) {
@@ -79,7 +85,7 @@ export function advanceCityTraffic(items, delta, time, obstacles=[], junctions=J
     const approach=approaches.get(item);
     if(!approach || item.junction || owners.has(approach.key))continue;
     const signaled=approach.signaled ?? (approach.x===SIGNAL_JUNCTION.x && approach.z===SIGNAL_JUNCTION.z);
-    if(signaled && phases[approach.axis]!=="green")continue;
+    if(signaled && signalPhase(time,approach)[approach.axis]!=="green")continue;
     item.junction=approach;item.enteredJunction=false;owners.set(approach.key,item);
   }
   for(const item of active) {
@@ -95,7 +101,7 @@ export function advanceCityTraffic(items, delta, time, obstacles=[], junctions=J
     }
     // A reserved crossing may clear after amber; newcomers wait at the line.
     const signaled=approach && (approach.signaled ?? (approach.x===SIGNAL_JUNCTION.x && approach.z===SIGNAL_JUNCTION.z));
-    if(signaled && !item.enteredJunction && !(item.reverseRemaining>0) && phases[axis]!=="green") {
+    if(signaled && !item.enteredJunction && !(item.reverseRemaining>0) && signalPhase(time,approach)[axis]!=="green") {
       const gap=Math.max(0,-1.25-approach.along-pose.halfLength);
       step=Math.sign(step)*Math.min(Math.abs(step),gap);
     }

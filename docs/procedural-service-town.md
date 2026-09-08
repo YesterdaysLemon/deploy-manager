@@ -31,7 +31,7 @@ have their connector rotations checked against actual GLB geometry.
 
 Every four-way crossing has a hovering four-sided signal. All signal bodies,
 rings and lamps are instanced in eight draws total; the visible lamps and cars
-share the same green, amber and all-red cycle. Junction reservations cover the
+share the same per-intersection green, amber and all-red cycle. Junction reservations cover the
 expanded graph, including newly added outer plots. Couriers retain collision
 checks, and slow frames use bounded substeps instead of dropping travel time.
 The highway, railway and harbor continue to carry ambient traffic. This remains
@@ -76,3 +76,11 @@ is reserved in the terrain/vegetation plan and adapts to the staggered fleet
 layout. The original suburban walking route remains connected. Geometry checks
 cover the forecourt join, actual street endpoint, plot clearance and railway
 separation across three fleet sizes.
+
+
+Preview v42 staggers signal timing geographically: each intersection has a
+stable offset, shared by vehicle reservations, stop-line checks and its visible
+lamps. Opposite faces stay paired, with amber and all-red clearance retained.
+Per-instance lamp colors change only at phase transitions; the signal system
+still uses eight draws for the whole town. Traffic replay checks cover completed
+deliveries and collision clearance under the staggered schedules.
