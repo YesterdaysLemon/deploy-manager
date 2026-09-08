@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { readFile } from 'node:fs/promises';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { buildServiceCampus, buildPocketPark, planServiceLot, planTownInfill, serviceDistrict, footprintsOverlap } from '../client/service-town.js';
+import { streetTile } from '../client/town-streets.js';
 import { createPlotLayout, ASSET_URLS } from '../client/city3d.js';
 
 // Parse actual authored GLB geometry. Strip material references only so Node
@@ -61,11 +62,55 @@ test('Kenney gardens use vacant land and keep actual assets separated',async()=>
   const layout=createPlotLayout({routes}),reordered=createPlotLayout({routes:[...routes].reverse()});
   const plan=planTownInfill(layout);
   assert.deepEqual(plan,planTownInfill(reordered));
-  assert.ok(plan.length<=64);
+  assert.ok(plan.length<=2);
   for(const {cell,neighbor} of plan){assert.ok(!layout.occupiedCellKeys.has(`${cell.col}:${cell.row}`));assert.ok(neighbor);}
   for(let variant=0;variant<5;variant++){
     const park=await buildPocketPark({x:0,z:0,col:0,row:0},variant,cloneMeasuredAsset),bounds=new THREE.Box3().setFromObject(park);
     assert.ok(bounds.min.x>=-2.48 && bounds.max.x<=2.48 && bounds.min.z>=-2.48 && bounds.max.z<=2.48);
     assertClear(park.userData.footprints);
+  }
+});
+
+
+test('growing towns have sparse blocks and a connected street graph around every service',()=>{
+  for(const count of [10,30,60]) {
+    const routes=Array.from({length:count},(_,i)=>({id:`app-${i}`}));
+    const layout=createPlotLayout({routes});
+    assert.ok(layout.activeCells.length<=layout.entities.length+5);
+    assert.ok(layout.activeCells.length<layout.cells.length || layout.cells.length-layout.entities.length<=5);
+    const network=layout.streets, seen=new Set(), queue=[network.nodes.keys().next().value];
+    while(queue.length){const id=queue.pop();if(seen.has(id))continue;seen.add(id);queue.push(...network.nodes.get(id).neighbors);}
+    assert.equal(seen.size,network.nodes.size);
+    for(const {a,b} of network.edges) {
+      assert.ok(Math.abs(a.x-b.x)<.001 || Math.abs(a.z-b.z)<.001);
+      for(const cell of layout.activeCells)for(let i=0;i<=8;i++) {
+        const x=a.x+(b.x-a.x)*i/8,z=a.z+(b.z-a.z)*i/8;
+        assert.ok(Math.abs(x-cell.x)>=3.48 || Math.abs(z-cell.z)>=3.48,'street crosses a block');
+      }
+    }
+    assert.ok(network.junctions.some(j=>Math.abs(j.x)>7 || Math.abs(j.z)>7));
+    assert.ok(network.junctions.filter(j=>j.signaled).every(j=>j.neighbors.size===4));
+  }
+});
+
+
+test('street tiles expose actual Kenney road ports toward connected neighbors',async()=>{
+  const layout=createPlotLayout({routes:Array.from({length:25},(_,i)=>({id:`app-${i}`}))});
+  const ports=new Map();
+  for(const node of layout.streets.nodes.values()) {
+    const tile=streetTile(node,layout.streets);
+    if(!ports.has(tile.key)) {
+      const bytes=await readFile(new URL(`../public${ASSET_URLS[tile.key]}`,import.meta.url));
+      const length=bytes.readUInt32LE(12),doc=JSON.parse(bytes.toString('utf8',20,20+length));
+      const accessor=doc.accessors[doc.meshes[0].primitives[0].attributes.POSITION],view=doc.bufferViews[accessor.bufferView];
+      const positions=Array.from({length:accessor.count},(_,i)=>[0,1,2].map(j=>bytes.readFloatLE(28+length+(view.byteOffset??0)+(accessor.byteOffset??0)+i*(view.byteStride??12)+j*4)));
+      // Open asphalt ports have y=.01 vertices at the middle of a tile edge;
+      // a closed kerb has only y=.02 geometry there. Read the source GLB.
+      const open=[[-1,0],[1,0],[0,-1],[0,1]].filter(([x,z])=>positions.some(p=>Math.abs(p[1]-.01)<.001 && (x?Math.abs(p[0]-x*.5)<.001 && Math.abs(p[2])<.1:Math.abs(p[2]-z*.5)<.001 && Math.abs(p[0])<.1)));
+      ports.set(tile.key,open);
+    }
+    const transformed=ports.get(tile.key).map(([x,z])=>[Math.round(x*Math.cos(tile.rotation)+z*Math.sin(tile.rotation)),Math.round(-x*Math.sin(tile.rotation)+z*Math.cos(tile.rotation))]);
+    for(const id of node.neighbors){const p=layout.streets.nodes.get(id);assert.ok(transformed.some(([x,z])=>x===Math.sign(p.x-node.x)&&z===Math.sign(p.z-node.z)),`${tile.key} blocks ${id}`);}
+    if(node.neighbors.size>1)assert.equal(transformed.length,node.neighbors.size);
   }
 });

@@ -4,12 +4,19 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 // Batch only immutable scenery. Interactive buildings, animated objects and
 // independently unloaded world chunks retain their own ownership and identity.
 export function batchStaticScenery(root, exclusions = []) {
-  const excluded = new Set(exclusions.filter(Boolean)), buckets = new Map();
+  const excluded = new Set(exclusions.filter(Boolean)), buckets = new Map(), lineMaterials = new Map();
   root.updateMatrixWorld(true);
   const inverse = root.matrixWorld.clone().invert();
   root.traverse((node) => {
-    if ((!node.isMesh && !node.isLineSegments) || node.isInstancedMesh || Array.isArray(node.material) || node.material.transparent) return;
+    if ((!node.isMesh && !node.isLineSegments) || node.isInstancedMesh || Array.isArray(node.material) || (node.material.transparent && !node.isLineSegments)) return;
     for (let parent = node; parent; parent = parent.parent) if (excluded.has(parent)) return;
+    // Identical ink strokes used to keep one material and draw per little box.
+    // Merge them in the same local owner so moving a campus still moves its ink.
+    if(node.isLineSegments && node.material.isLineBasicMaterial && !node.material.map) {
+      const m=node.material, key=[m.color.getHex(),m.opacity,m.transparent,m.depthTest,m.depthWrite,m.blending,m.linewidth,m.toneMapped].join(':');
+      if(!lineMaterials.has(key))lineMaterials.set(key,m);
+      node.material=lineMaterials.get(key);
+    }
     const spatial = node.name.includes("tree") ? `${Math.floor(node.matrixWorld.elements[12]/16)}:${Math.floor(node.matrixWorld.elements[14]/16)}` : "";
     const key = `${spatial}:${node.isLineSegments ? "line" : "mesh"}:${node.material.id}:${node.castShadow}:${node.receiveShadow}:${Object.keys(node.geometry.attributes).sort().join(",")}`;
     if (!buckets.has(key)) buckets.set(key, []); buckets.get(key).push(node);

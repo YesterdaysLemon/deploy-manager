@@ -56,8 +56,8 @@ export function planServiceLot(entity) {
 }
 
 export function planTownInfill(layout, reserved = 3) {
-  const cells=layout.cells.filter(cell=>!layout.occupiedCellKeys.has(`${cell.col}:${cell.row}`));
-  return cells.slice(reserved,reserved+64).map(cell=>{
+  const cells=(layout.activeCells??layout.cells).filter(cell=>!layout.occupiedCellKeys.has(`${cell.col}:${cell.row}`));
+  return cells.slice(reserved,reserved+2).map(cell=>{
     const nearest=[...layout.entities].sort((a,b)=>Math.hypot(a.x-cell.x,a.z-cell.z)-Math.hypot(b.x-cell.x,b.z-cell.z)||a.id.localeCompare(b.id))[0];
     const seed=townHash(`park:${cell.x}:${cell.z}`);
     const district=nearest?serviceDistrict(nearest):"village";

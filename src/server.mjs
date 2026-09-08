@@ -175,6 +175,8 @@ const kenneyModelPaths = [
   "industrial/shipping-container-b.glb",
   "roads/road-bend.glb",
   "roads/road-crossroad.glb",
+  "roads/road-intersection.glb",
+  "roads/road-end.glb",
   "roads/road-curve.glb",
   "roads/road-straight.glb",
   "roads/sign-highway.glb",

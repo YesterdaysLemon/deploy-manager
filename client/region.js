@@ -1,6 +1,5 @@
 import * as THREE from "three";
-import { roadStrip, createBoulevard } from "./transport.js";
-import { SIGNAL_JUNCTION } from "./city-traffic.js";
+import { roadStrip } from "./transport.js";
 import { addPortLife, addGulls, warmVillageWindows } from "./city-life.js";
 import { createFrontage } from "./frontage.js";
 
@@ -184,32 +183,30 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
   const directionSign = signFace("CITY  →", "#266e64", 1.05, 0.48);
   directionSign.position.set(-3.9, 1.25, junctionZ - 1.55); directionSign.rotation.y = -Math.PI / 2;
   rod(new THREE.Vector3(-3.9, 0.2, junctionZ - 1.55), new THREE.Vector3(-3.9, 1.5, junctionZ - 1.55), 0.035, 0x71877d);
-  const signal=new THREE.Group();signal.name="four-sided-hover-signal";signal.position.set(SIGNAL_JUNCTION.x,2.85,SIGNAL_JUNCTION.z);world.add(signal);
-  signal.add(new THREE.Mesh(new THREE.BoxGeometry(.44,.48,.44),material(0x263c38)));
-  const ring=new THREE.Mesh(new THREE.TorusGeometry(.34,.018,5,20),new THREE.MeshBasicMaterial({color:0x7cdbc3}));ring.rotation.x=Math.PI/2;ring.position.y=-.29;signal.add(ring);
+  const sites=city.layout.streets.junctions.filter(j=>j.signaled);
+  const signal=new THREE.Group();signal.name="four-sided-hover-signals";signal.position.y=2.85;world.add(signal);
+  const transform=new THREE.Object3D();
+  const bodies=new THREE.InstancedMesh(new THREE.BoxGeometry(.5,.64,.5),material(0x263c38),sites.length);
+  const rings=new THREE.InstancedMesh(new THREE.TorusGeometry(.35,.018,5,16),new THREE.MeshBasicMaterial({color:0x7cdbc3}),sites.length);
+  sites.forEach((p,i)=>{
+    transform.position.set(p.x,0,p.z);transform.rotation.set(0,0,0);transform.updateMatrix();bodies.setMatrixAt(i,transform.matrix);
+    transform.position.y=-.36;transform.rotation.x=Math.PI/2;transform.updateMatrix();rings.setMatrixAt(i,transform.matrix);
+  });
+  signal.add(bodies,rings);
   const lamps=[];
-  for(let face=0;face<4;face++)for(let index=0;index<3;index++) {
-    const angle=face*Math.PI/2,hex=[0xe96b4f,0xe7ba51,0x53d4a7][index];
-    const mesh=new THREE.Mesh(new THREE.SphereGeometry(.049,6,5),new THREE.MeshBasicMaterial({color:hex}));
-    mesh.position.set(Math.sin(angle)*.24,.14-index*.14,Math.cos(angle)*.24);signal.add(mesh);
-    lamps.push({mesh,hex,axis:face%2?"x":"z",color:["red","amber","green"][index]});
+  for(const axis of ["x","z"])for(let index=0;index<3;index++) {
+    const hex=[0xe96b4f,0xe7ba51,0x53d4a7][index];
+    const mesh=new THREE.InstancedMesh(new THREE.SphereGeometry(.065,6,5),new THREE.MeshBasicMaterial({color:hex}),sites.length*2);
+    sites.forEach((p,i)=>[-1,1].forEach((sign,j)=>{
+      transform.position.set(p.x+(axis==="x"?sign*.27:0),.2-index*.2,p.z+(axis==="z"?sign*.27:0));
+      transform.rotation.set(0,0,0);transform.updateMatrix();mesh.setMatrixAt(i*2+j,transform.matrix);
+    }));
+    signal.add(mesh);lamps.push({mesh,hex,axis,color:["red","amber","green"][index]});
   }
   city.signalFixtures.push({group:signal,lamps});
-
+  city.stage.dataset.signalJunctions=String(sites.length);
   const roadSource = await city.cloneAsset("roads/straight", {width:1,depth:1,exact:true});
   if (generation !== city.worldGeneration) return;
-  const boulevard = createBoulevard(city.bounds);
-  for (const [index,key] of ["cars/taxi","cars/sedan"].entries()) {
-    const car=await asset(key,0,0.18,0,0.68,1.4,0.75);
-    if (!car || generation !== city.worldGeneration) return;
-    const points=Array.from({length:160},(_,i)=> {
-      const t=i/160,p=boulevard.getPointAt(t),v=boulevard.getTangentAt(t);
-      return p.addScaledVector(new THREE.Vector3(-v.z,0,v.x).normalize(),index ? -0.42 : 0.42);
-    });
-    city.motion.push({object:car,curve:new THREE.CatmullRomCurve3(points,true,"centripetal"),speed:index ? -0.009 : 0.012,
-      cityVehicle:true,bodyWidth:.68,bodyLength:1.4,cruiseSpeed:index?1:1.2,
-      offset:index ? 0.64 : 0.14,rotationOffset:index ? Math.PI : 0,wrap:true});
-  }
   for (const road of plan.roads) for (let i=1;i<road.length;i++) {
     const c = new THREE.LineCurve3(new THREE.Vector3(road[i-1][0],0.15,road[i-1][1]),new THREE.Vector3(road[i][0],0.15,road[i][1]));
     const length=c.getLength(); world.add(roadStrip(roadSource,d=>c.getPointAt(d/length),length,1.72));

@@ -61,11 +61,11 @@ export function oceanWaveHeightAt(x, z, time = 0, iterations = 8, shoreX = -Infi
   return t === 0 ? 0 : height * t * t * (3 - 2 * t);
 }
 
-export function createCoastalWaterMaterial(shoreX) {
+export function createCoastalWaterMaterial(shoreX, detail = 14) {
   return new THREE.ShaderMaterial({
     uniforms: {
       uTime: { value: 0 }, uShoreX: { value: shoreX },
-      uDetail: { value: 14 },
+      uDetail: { value: detail },
       uViewDirection: { value: new THREE.Vector3(-1, 1, -1).normalize() },
       uSunDirection: { value: new THREE.Vector3(-18, 31, 20).normalize() },
     },
@@ -90,7 +90,7 @@ export function createCoastalWaterMaterial(shoreX) {
       varying vec3 vWorldPosition;
       ${coastGLSL}
       #define WATER_FRAGMENT
-      #define OCEAN_WAVE_COUNT 14
+      #define OCEAN_WAVE_COUNT ${detail <= 4 ? 4 : 14}
       ${sampleGLSL}
       void main() {
         vec2 p = vWorldPosition.xz;

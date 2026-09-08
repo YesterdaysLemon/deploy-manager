@@ -37,7 +37,14 @@ export function laneCurve(centerline, offset=.42) {
   }),false,"centripetal");
 }
 
-export function advanceCityTraffic(items, delta, time, obstacles=[]) {
+export function advanceCityTraffic(items, delta, time, obstacles=[], junctions=JUNCTIONS) {
+  // Slow frames advance through bounded collision steps instead of slowing
+  // traffic to half speed or jumping over a stop line.
+  if(delta>.05) {
+    const steps=Math.ceil(Math.min(delta,.25)/.05),step=Math.min(delta,.25)/steps;
+    for(let i=0;i<steps;i++)advanceCityTraffic(items,step,time-(steps-1-i)*step,obstacles,junctions);
+    return;
+  }
   const active=[];
   // Spawn into free road space instead of allowing initially overlapping loops.
   for(const item of items) {
@@ -45,7 +52,7 @@ export function advanceCityTraffic(items, delta, time, obstacles=[]) {
       const length=item.curve.getLength();
       for(let i=0;i<100;i++) {
         const distance=(item.offset*length+i*length/100)%length,pose=vehiclePose(item,distance);
-        if(JUNCTIONS.every(j=>Math.hypot(pose.x-j.x,pose.z-j.z)>2.3) && active.every(other=>!vehiclesOverlap(pose,vehiclePose(other,other.cityDistance),.12))) {item.cityDistance=distance;break;}
+        if(junctions.every(j=>Math.hypot(pose.x-j.x,pose.z-j.z)>2.3) && active.every(other=>!vehiclesOverlap(pose,vehiclePose(other,other.cityDistance),.12))) {item.cityDistance=distance;break;}
       }
     }
     if(item.cityDistance!==undefined)active.push(item);
@@ -62,7 +69,7 @@ export function advanceCityTraffic(items, delta, time, obstacles=[]) {
       else owners.set(item.junction.key,item);
     }
     const axis=Math.abs(pose.dx)>Math.abs(pose.dz)?"x":"z",cross=axis==="x"?"z":"x",sign=Math.sign(axis==="x"?pose.dx:pose.dz);
-    const candidate=JUNCTIONS.map(j=>({...j,axis,along:(pose[axis]-j[axis])*sign,across:Math.abs(pose[cross]-j[cross])}))
+    const candidate=junctions.map(j=>({...j,axis,along:(pose[axis]-j[axis])*sign,across:Math.abs(pose[cross]-j[cross])}))
       .filter(j=>j.along<-.9 && j.along>-3.7 && j.across<1.05).sort((a,b)=>b.along-a.along)[0];
     if(candidate)approaches.set(item,candidate);
   }
@@ -71,7 +78,7 @@ export function advanceCityTraffic(items, delta, time, obstacles=[]) {
   for(const item of [...active].sort((a,b)=>Number(Boolean(b.once))-Number(Boolean(a.once)))) {
     const approach=approaches.get(item);
     if(!approach || item.junction || owners.has(approach.key))continue;
-    const signaled=approach.x===SIGNAL_JUNCTION.x && approach.z===SIGNAL_JUNCTION.z;
+    const signaled=approach.signaled ?? (approach.x===SIGNAL_JUNCTION.x && approach.z===SIGNAL_JUNCTION.z);
     if(signaled && phases[approach.axis]!=="green")continue;
     item.junction=approach;item.enteredJunction=false;owners.set(approach.key,item);
   }
@@ -79,8 +86,6 @@ export function advanceCityTraffic(items, delta, time, obstacles=[]) {
     if(item.reverseRemaining>0 && time>(item.recoveryUntil??Infinity)) {item.reverseRemaining=0;item.yieldUntil=time+1;item.blockedSeconds=0;}
     const old=item.cityDistance,pose=poses.get(item);
     const axis=Math.abs(pose.dx)>Math.abs(pose.dz)?"x":"z";
-    const crossAxis=axis==="x"?"z":"x";
-    const forward=axis==="x"?pose.dx:pose.dz,along=(pose[axis]-SIGNAL_JUNCTION[axis])*Math.sign(forward),across=Math.abs(pose[crossAxis]-SIGNAL_JUNCTION[crossAxis]);
     let step=Math.min(delta,.05)*(item.cruiseSpeed??.9)*Math.sign(item.speed);
     if(item.reverseRemaining>0)step=-Math.sign(item.speed)*Math.min(item.reverseRemaining,Math.min(delta,.05)*.6);
     else if((item.yieldUntil??0)>time)step=0;
@@ -88,9 +93,10 @@ export function advanceCityTraffic(items, delta, time, obstacles=[]) {
     if(approach && owners.get(approach.key)!==item && !(item.reverseRemaining>0)) {
       step=Math.sign(step)*Math.min(Math.abs(step),Math.max(0,-2.45-approach.along));
     }
-    // Stop before the junction; amber means stop unless already committed.
-    if(!(item.reverseRemaining>0) && across<1.1 && along < -1.25 && along > -3 && phases[axis]!=="green") {
-      const gap=Math.max(0,-1.25-along-pose.halfLength);
+    // A reserved crossing may clear after amber; newcomers wait at the line.
+    const signaled=approach && (approach.signaled ?? (approach.x===SIGNAL_JUNCTION.x && approach.z===SIGNAL_JUNCTION.z));
+    if(signaled && !item.enteredJunction && !(item.reverseRemaining>0) && phases[axis]!=="green") {
+      const gap=Math.max(0,-1.25-approach.along-pose.halfLength);
       step=Math.sign(step)*Math.min(Math.abs(step),gap);
     }
     const proposed=item.once ? Math.min(item.curve.getLength()-.001,old+step) : old+step;

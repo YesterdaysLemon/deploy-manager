@@ -71,3 +71,14 @@ factory smoke, unlike the vignettes, follow actual unhealthy probe states.
 ## Authored transform audit
 
 The transit pieces retain their source proportions instead of being sized by eye. The road straight and bend each occupy a `1 x 1` authored tile, while the broad curve occupies `2 x 2`; all three use one `2.28` world-unit tile scale. Both bends are authored with west and north connectors. The large rail corner connects its south `(0, 0)` port to its west `(-4, 4)` port and uses the same `1.48` scale as the straight track width. These measured ports are asserted against the procedural traffic curves in `tests/city3d.test.mjs` so a future rotation or recentering change cannot silently reopen seams.
+
+
+## Staggered service town - preview v40
+
+Original `road-intersection.glb` and `road-end.glb` from the Roads kit join the
+curated set, with the same adjacent palette texture and CC0 license. The town
+now follows occupied square blocks in staggered two-row terraces; three future
+plots and at most two parks replace the full-square infill. The road graph,
+Kenney connector rotations and four-sided hovering signal instances share the
+same junction plan. Mobile rendering and current measurements are documented
+in `docs/procedural-service-town.md`; they supersede the older budgets above.
