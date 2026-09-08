@@ -18,6 +18,12 @@ The exact upstream license text for each downloaded archive is retained as `LICE
 
 ## Curated scope
 
+The service-town pass adds twelve original GLBs from the same downloaded packs:
+Suburban houses c/f/i/k/p/u, planter, stone path, and low fence; Commercial
+parasols a/b and awning. These are used by deterministic service campuses, with
+house variants loaded on demand. See `docs/procedural-service-town.md` for the
+placement, asset-loading evidence, and performance scope.
+
 The set is limited to models rendered by the default city, assigned by its
 deterministic fleet-expansion pool, or retained as measured transport reference
 pieces. Each kit's referenced `Textures/colormap.png` is kept beside its GLBs.

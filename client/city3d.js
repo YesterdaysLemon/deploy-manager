@@ -11,6 +11,7 @@ import { advanceCityTraffic, laneCurve, signalPhase, vehiclePose, vehiclesOverla
 import { healthScenery, railSchedule, updatePortLife, updateGulls } from "./city-life.js";
 import { MapTapGesture, clampMapLabel } from "./interaction.js";
 import { cityRenderPolicy, renderPixelRatio } from "./render-policy.js";
+import { TOWN_ASSETS, buildServiceCampus, buildPocketPark, planTownInfill } from "./service-town.js";
 export { oceanWaveHeightAt, OCEAN_WAVE_SETTINGS } from "./ocean.js";
 import {
   CONTROL_PLOT_ADDRESSES,
@@ -51,6 +52,7 @@ const COLORS = Object.freeze({
 });
 
 export const ASSET_URLS = Object.freeze({
+  ...TOWN_ASSETS,
   "industrial/building-c": "/assets/kenney/industrial/building-c.glb",
   "industrial/building-e": "/assets/kenney/industrial/building-e.glb",
   "industrial/building-m": "/assets/kenney/industrial/building-m.glb",
@@ -229,6 +231,7 @@ export function createPlotLayout(city = {}) {
     name: route.name ?? route.id,
     code: String(index + 1).padStart(2, "0"),
     kind: "route",
+    serviceKind: route.kind,
     modelKey: chooseBuildingKey(route.id),
   }));
   const storeEntities = datastores.map((store) => ({
@@ -1238,7 +1241,7 @@ export class City3D {
   }
 
   createSelectionMarker() {
-    const geometry = new THREE.RingGeometry(2.46, 2.62, 4, 1, Math.PI / 4);
+    const geometry = new THREE.RingGeometry(2.46, 2.55, 48);
     const material = new THREE.MeshBasicMaterial({
       color: COLORS.rustBright,
       transparent: true,
@@ -1449,6 +1452,7 @@ export class City3D {
     const results = await Promise.allSettled(jobs);
     if (generation !== this.worldGeneration) return false;
     const failures = results.filter((result) => result.status === "rejected");
+    this.stage.dataset.townDistricts = [...this.entityGroups.values()].map(group => group.userData.modelRoot?.userData.district).filter(Boolean).sort().join(',');
     this.stage.dataset.batchedDrawsSaved = String(batchStaticScenery(this.world, [
       ...this.entityGroups.values(), ...this.motion.map((item) => item.object),
       ...this.trains.flatMap((train) => train.cars), ...this.signalMotion.map((item) => item.object),
@@ -1497,16 +1501,16 @@ export class City3D {
 
     this.addTerrain();
 
-    const lotMaterial = new THREE.MeshStandardMaterial({ color: COLORS.paperLight, roughness: 0.98 });
-    const vacantMaterial = new THREE.MeshStandardMaterial({ color: 0xd9d3ac, roughness: 1 });
+    const lotMaterial = new THREE.MeshStandardMaterial({ color: 0x98b881, roughness: 0.98 });
+    const vacantMaterial = new THREE.MeshStandardMaterial({ color: 0x87ad79, roughness: 1 });
     for (const cell of layout.cells) {
       const occupied = layout.occupiedCellKeys.has(`${cell.col}:${cell.row}`);
       addOutlinedBox(
         this.world,
-        new THREE.Vector3(lotSize, 0.18, lotSize),
+        new THREE.Vector3(lotSize, 0.06, lotSize),
         new THREE.Vector3(cell.x, 0, cell.z),
         occupied ? lotMaterial : vacantMaterial,
-        occupied ? 0.38 : 0.2,
+        0.04,
       );
     }
 
@@ -1838,18 +1842,10 @@ export class City3D {
   }
 
   async addEntity(entity, generation) {
-    const isManager = entity.id === "deploy-manager";
     const isDocker = entity.id === "docker";
-    const fit = entity.kind === "datastore"
-      ? { width: 3.4, depth: 3.4, height: 4.5 }
-      : isManager
-        ? { width: 3.75, depth: 3.75, height: 7.2 }
-        : isDocker
-          ? { width: 3.15, depth: 3.15, height: 4.4 }
-          : { width: 4.18, depth: 4.18, height: 5.25 };
     let model;
     try {
-      model = await this.cloneAsset(entity.modelKey, fit);
+      model = await buildServiceCampus(entity, (key, dimensions) => this.cloneAsset(key, dimensions));
     } catch {
       model = new THREE.Group();
       addOutlinedBox(
@@ -1868,17 +1864,10 @@ export class City3D {
     model.position.y = 0.02;
     group.add(model);
 
-    const pedestalMaterial = new THREE.MeshStandardMaterial({
-      color: entity.kind === "control" ? COLORS.inkSoft : entity.kind === "datastore" ? 0xd59a75 : 0xdfd7b4,
-      roughness: 0.95,
-    });
-    const pedestal = addOutlinedBox(
-      group,
-      new THREE.Vector3(4.62, 0.14, 4.62),
-      new THREE.Vector3(0, -0.02, 0),
-      pedestalMaterial,
-      0.42,
-    );
+    const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(2.42, 2.46, .045, 32),
+      new THREE.MeshStandardMaterial({color:0xabc88d,roughness:1}));
+    pedestal.position.y=-.05;
+    group.add(pedestal);
     pedestal.userData.entityId = entity.id;
 
     if (isDocker) await this.addDockerCargo(group, generation);
@@ -1941,6 +1930,13 @@ export class City3D {
 
   async buildAmbientWorld(layout, generation) {
     const vacant = layout.cells.filter((cell) => !layout.occupiedCellKeys.has(`${cell.col}:${cell.row}`));
+    // Vacant land becomes a bounded network of parks, not empty concrete lots.
+    const infill=planTownInfill(layout,GHOST_MODEL_KEYS.length);
+    for (const {cell,variant,neighbor} of infill) {
+      const park=buildPocketPark(cell,variant);park.userData.neighbor=neighbor;
+      this.world.add(park);
+    }
+    this.stage.dataset.pocketParks=String(infill.length);
     await Promise.all([
       this.addGhostTown(vacant, generation),
       this.addTerrainTrees(generation),
