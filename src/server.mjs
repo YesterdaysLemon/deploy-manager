@@ -144,6 +144,18 @@ const staticAssets = new Map([
 ]);
 
 const kenneyModelPaths = [
+  "suburban/building-type-c.glb",
+  "suburban/building-type-f.glb",
+  "suburban/building-type-i.glb",
+  "suburban/building-type-k.glb",
+  "suburban/building-type-p.glb",
+  "suburban/building-type-u.glb",
+  "suburban/planter.glb",
+  "suburban/path-stones-long.glb",
+  "suburban/fence-low.glb",
+  "commercial/detail-parasol-a.glb",
+  "commercial/detail-parasol-b.glb",
+  "commercial/detail-awning.glb",
   "cars/delivery.glb",
   "cars/sedan.glb",
   "cars/taxi.glb",
@@ -163,6 +175,8 @@ const kenneyModelPaths = [
   "industrial/shipping-container-b.glb",
   "roads/road-bend.glb",
   "roads/road-crossroad.glb",
+  "roads/road-intersection.glb",
+  "roads/road-end.glb",
   "roads/road-curve.glb",
   "roads/road-straight.glb",
   "roads/sign-highway.glb",

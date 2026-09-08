@@ -11,6 +11,8 @@ import { advanceCityTraffic, laneCurve, signalPhase, vehiclePose, vehiclesOverla
 import { healthScenery, railSchedule, updatePortLife, updateGulls } from "./city-life.js";
 import { MapTapGesture, clampMapLabel } from "./interaction.js";
 import { cityRenderPolicy, renderPixelRatio } from "./render-policy.js";
+import { TOWN_ASSETS, buildServiceCampus, buildPocketPark, planTownInfill } from "./service-town.js";
+import { selectTownCells, createTownStreets, streetNodePath, streetTile, displayPlotAddress } from "./town-streets.js";
 export { oceanWaveHeightAt, OCEAN_WAVE_SETTINGS } from "./ocean.js";
 import {
   CONTROL_PLOT_ADDRESSES,
@@ -51,6 +53,7 @@ const COLORS = Object.freeze({
 });
 
 export const ASSET_URLS = Object.freeze({
+  ...TOWN_ASSETS,
   "industrial/building-c": "/assets/kenney/industrial/building-c.glb",
   "industrial/building-e": "/assets/kenney/industrial/building-e.glb",
   "industrial/building-m": "/assets/kenney/industrial/building-m.glb",
@@ -77,6 +80,8 @@ export const ASSET_URLS = Object.freeze({
   "roads/curve": "/assets/kenney/roads/road-curve.glb",
   "roads/straight": "/assets/kenney/roads/road-straight.glb",
   "roads/crossroad": "/assets/kenney/roads/road-crossroad.glb",
+  "roads/intersection": "/assets/kenney/roads/road-intersection.glb",
+  "roads/end": "/assets/kenney/roads/road-end.glb",
   "roads/traffic-light": "/assets/kenney/roads/traffic-light-object-vertical.glb",
   "roads/highway-sign": "/assets/kenney/roads/sign-highway.glb",
   "cars/delivery": "/assets/kenney/cars/delivery.glb",
@@ -229,6 +234,7 @@ export function createPlotLayout(city = {}) {
     name: route.name ?? route.id,
     code: String(index + 1).padStart(2, "0"),
     kind: "route",
+    serviceKind: route.kind,
     modelKey: chooseBuildingKey(route.id),
   }));
   const storeEntities = datastores.map((store) => ({
@@ -265,7 +271,7 @@ export function createPlotLayout(city = {}) {
   }
   const dynamicAssignments = dynamicEntities.map((entity) => ({ ...entity, plot: addresses.get(entity) }));
   const assignedAddresses = [...CONTROL_PLOT_ADDRESSES, ...dynamicAssignments.map(({ plot }) => plot)];
-  const size = plotGridSize(assignedAddresses);
+  const size = plotGridSize(assignedAddresses.map(displayPlotAddress));
   const center = (size - 1) / 2;
   const cells = [];
   for (let row = 0; row < size; row += 1) {
@@ -278,9 +284,10 @@ export function createPlotLayout(city = {}) {
       });
     }
   }
-  const cellForAddress = ({ x, z }) => cells.find(
-    (cell) => cell.col === x + center && cell.row === z + center,
-  );
+  const cellForAddress = (address) => {
+    const {x,z}=displayPlotAddress(address);
+    return cells.find(cell=>cell.col===x+center && cell.row===z+center);
+  };
   const assignments = [
     ...CONTROL_ENTITIES.map((entity, index) => ({
       ...entity,
@@ -290,10 +297,14 @@ export function createPlotLayout(city = {}) {
     ...dynamicAssignments.map((entity) => ({ ...entity, cell: cellForAddress(entity.plot) })),
   ];
 
+  const occupiedCellKeys = new Set(assignments.map(({ cell }) => `${cell.col}:${cell.row}`));
+  const activeCells = selectTownCells(cells, occupiedCellKeys);
   return {
     size,
     cells,
-    occupiedCellKeys: new Set(assignments.map(({ cell }) => `${cell.col}:${cell.row}`)),
+    activeCells,
+    streets: createTownStreets(activeCells, CITY_METRICS.pitch, size),
+    occupiedCellKeys,
     entities: assignments.map(({ cell, ...entity }) => ({ ...entity, ...cell })),
     extent: size * CITY_METRICS.lotSize + (size - 1) * CITY_METRICS.roadWidth,
   };
@@ -309,6 +320,7 @@ export function createPerimeterBands(layout) {
     minZ: minCenter - lotSize / 2,
     maxZ: maxCenter + lotSize / 2,
   };
+  if(layout.activeCells)bounds.activeCells=layout.activeCells;
   const highwayWidth = 2.28;
   const railWidth = 1.48;
   const highwayZ = bounds.minZ - 4.4;
@@ -384,7 +396,7 @@ export function createPerimeterBands(layout) {
   ground.width = ground.maxX - ground.minX;
   ground.depth = ground.maxZ - ground.minZ;
 
-  return { bounds, highway, rail, coast, ground };
+  return { bounds, highway, rail, coast, ground, streets:layout.streets };
 }
 
 export function chooseAmbientDeliveryTargets(layout, count = AMBIENT_DELIVERY_COUNT) {
@@ -587,7 +599,7 @@ function setEntityMetadata(root, entityId) {
   });
 }
 
-function prepareAsset(root, key = "") {
+function prepareAsset(root, key = "", outlines = true, palette = null, materialCache = new Map()) {
   const meshes = [];
   root.traverse((child) => {
     if (child.isMesh) meshes.push(child);
@@ -601,11 +613,19 @@ function prepareAsset(root, key = "") {
       material.userData.deployManagerSharedAsset = true;
       if ("roughness" in material) material.roughness = Math.max(0.72, material.roughness ?? 0.72);
       if ("metalness" in material) material.metalness = Math.min(0.16, material.metalness ?? 0.05);
+      if(!outlines && material.isMeshStandardMaterial) {
+        const sharedKey=palette && material.map ? JSON.stringify([palette,material.color.toArray(),material.transparent,material.opacity,material.alphaTest,material.side,material.vertexColors,material.map.offset.toArray(),material.map.repeat.toArray(),material.map.rotation,material.map.wrapS,material.map.wrapT,material.map.minFilter,material.map.magFilter]) : null;
+        if(sharedKey && materialCache.has(sharedKey))return materialCache.get(sharedKey);
+        const diffuse=new THREE.MeshLambertMaterial({color:material.color,map:material.map,transparent:material.transparent,opacity:material.opacity,alphaTest:material.alphaTest,side:material.side,vertexColors:material.vertexColors});
+        diffuse.userData.deployManagerSharedAsset=true;
+        if(sharedKey)materialCache.set(sharedKey,diffuse);
+        return diffuse;
+      }
       return material;
     });
     if (!Array.isArray(mesh.material)) [mesh.material] = mesh.material;
     if (mesh.material.length === 1) mesh.material = mesh.material[0];
-    if (!key.startsWith("roads/") && !key.startsWith("trains/track") && mesh.geometry?.attributes?.position?.count < 25_000) {
+    if (outlines && !key.startsWith("roads/") && !key.startsWith("trains/track") && mesh.geometry?.attributes?.position?.count < 25_000) {
       const edges = new THREE.LineSegments(
         new THREE.EdgesGeometry(mesh.geometry, 32),
         new THREE.LineBasicMaterial({ color: COLORS.ink, transparent: true, opacity: 0.24 }),
@@ -745,6 +765,11 @@ function distanceToCorridors(x, z, corridors = []) {
 }
 
 function distanceOutsideCity(x, z, bounds) {
+  if(bounds.activeCells) {
+    let distance=Infinity;
+    for(const c of bounds.activeCells)distance=Math.min(distance,Math.hypot(Math.max(0,Math.abs(x-c.x)-CITY_METRICS.pitch/2),Math.max(0,Math.abs(z-c.z)-CITY_METRICS.pitch/2)));
+    return distance;
+  }
   const centerX = (bounds.minX + bounds.maxX) / 2;
   const centerZ = (bounds.minZ + bounds.maxZ) / 2;
   const dx = Math.max(0, Math.abs(x - centerX) - (bounds.maxX - bounds.minX) / 2);
@@ -769,7 +794,7 @@ export function createTerrainContext(perimeter, highwayCurve, railCurve, coastli
     flatCorridors: [highwayCurve, railCurve]
       .filter(Boolean)
       .map((curve) => curve.getSpacedPoints(128))
-      .concat(regionalPlan.roads, regionalPlan.walks, [createBoulevard(perimeter.bounds).getSpacedPoints(96)]),
+      .concat(regionalPlan.roads, regionalPlan.walks, perimeter.streets ? perimeter.streets.edges.map(({a,b})=>[a,b]) : [createBoulevard(perimeter.bounds).getSpacedPoints(96)]),
     bounds: {
       minX: perimeter.ground.minX,
       maxX: perimeter.ground.maxX,
@@ -791,7 +816,7 @@ export function terrainHeightAt(x, z, context) {
   // No finite-domain flattening: streamed chunks share this global heightfield.
   const edgeFade = 1;
   const corridorDistance = Math.min(distanceToCorridors(x, z, context?.flatCorridors), continuationDistance(x, z, context?.continuations));
-  const corridorBlend = Number.isFinite(corridorDistance) ? smoothRange(0.9, 6.8, corridorDistance) : 1;
+  const corridorBlend = Number.isFinite(corridorDistance) ? smoothRange(0.9, 6.8, corridorDistance-(context?.surfacePadding??0)) : 1;
 
   const primary = terrainFbmAt(x, z);
   const secondary = terrainFbmAt(x + 73.4, z - 41.7);
@@ -947,6 +972,10 @@ export function createStreetRoutePoints(start, end, layout, options = {}) {
   const endAccess = options.endAccess ?? createStreetAccess(end, start, layout);
   if (!startAccess || !endAccess) return [];
 
+  if (layout.streets) {
+    const points=[startAccess.curb,...streetNodePath(layout.streets,startAccess.node,endAccess.node),endAccess.curb];
+    return points.filter((p,i)=>i===0 || !samePoint(p,points[i-1]));
+  }
   const points = [startAccess.curb, startAccess.node];
   if (startAccess.node.x !== endAccess.node.x && startAccess.node.z !== endAccess.node.z) {
     const horizontalFirst = (stableHash(`${start.id}:${end.id}`) & 1) === 0;
@@ -1107,6 +1136,7 @@ export class City3D {
     this.onActivate = onActivate;
     this.loading = stage.querySelector(".city3d-loading");
     this.assetCache = new Map();
+    this.mobileMaterialCache = new Map();
     this.loadedAssets = new Set();
     this.entityGroups = new Map();
     this.pickables = [];
@@ -1238,7 +1268,7 @@ export class City3D {
   }
 
   createSelectionMarker() {
-    const geometry = new THREE.RingGeometry(2.46, 2.62, 4, 1, Math.PI / 4);
+    const geometry = new THREE.RingGeometry(2.46, 2.55, 48);
     const material = new THREE.MeshBasicMaterial({
       color: COLORS.rustBright,
       transparent: true,
@@ -1354,6 +1384,7 @@ export class City3D {
   }
 
   resize() {
+    this.labelsDirty=true;
     const width = Math.max(1, this.stage.clientWidth);
     const height = Math.max(1, this.stage.clientHeight);
     const pixelRatio = renderPixelRatio(this.renderPolicy, width, height, window.devicePixelRatio || 1);
@@ -1376,7 +1407,9 @@ export class City3D {
     if (!this.assetCache.has(key)) {
       this.assetCache.set(key, this.loader.loadAsync(ASSET_URLS[key]).then((gltf) => {
         this.loadedAssets.add(key);
-        return prepareAsset(gltf.scene, key);
+        const images=gltf.parser.json.images;
+        const palette=images?.length===1 && images[0].uri ? new URL(images[0].uri,new URL(ASSET_URLS[key],location.href)).href : null;
+        return prepareAsset(gltf.scene, key, !this.renderPolicy.compact, palette, this.mobileMaterialCache);
       }));
     }
     return this.assetCache.get(key);
@@ -1449,6 +1482,7 @@ export class City3D {
     const results = await Promise.allSettled(jobs);
     if (generation !== this.worldGeneration) return false;
     const failures = results.filter((result) => result.status === "rejected");
+    this.stage.dataset.townDistricts = [...this.entityGroups.values()].map(group => group.userData.modelRoot?.userData.district).filter(Boolean).sort().join(',');
     this.stage.dataset.batchedDrawsSaved = String(batchStaticScenery(this.world, [
       ...this.entityGroups.values(), ...this.motion.map((item) => item.object),
       ...this.trains.flatMap((train) => train.cars), ...this.signalMotion.map((item) => item.object),
@@ -1473,9 +1507,7 @@ export class City3D {
   }
 
   buildGround(layout) {
-    const { lotSize, roadWidth, pitch } = CITY_METRICS;
-    const citySpan = layout.extent;
-    const minCenter = -((layout.size - 1) * pitch) / 2;
+    const { lotSize } = CITY_METRICS;
     this.perimeter = createPerimeterBands(layout);
     this.bounds = this.perimeter.bounds;
     this.highwayZ = this.perimeter.highway.z;
@@ -1497,39 +1529,20 @@ export class City3D {
 
     this.addTerrain();
 
-    const lotMaterial = new THREE.MeshStandardMaterial({ color: COLORS.paperLight, roughness: 0.98 });
-    const vacantMaterial = new THREE.MeshStandardMaterial({ color: 0xd9d3ac, roughness: 1 });
-    for (const cell of layout.cells) {
+    const lotMaterial = new THREE.MeshStandardMaterial({ color: 0x98b881, roughness: 0.98 });
+    const vacantMaterial = new THREE.MeshStandardMaterial({ color: 0x87ad79, roughness: 1 });
+    for (const cell of layout.activeCells) {
       const occupied = layout.occupiedCellKeys.has(`${cell.col}:${cell.row}`);
       addOutlinedBox(
         this.world,
-        new THREE.Vector3(lotSize, 0.18, lotSize),
+        new THREE.Vector3(lotSize, 0.06, lotSize),
         new THREE.Vector3(cell.x, 0, cell.z),
         occupied ? lotMaterial : vacantMaterial,
-        occupied ? 0.38 : 0.2,
+        0.04,
       );
     }
 
-    const roadMaterial = new THREE.MeshStandardMaterial({ color: COLORS.road, roughness: 0.96 });
-    for (let index = 0; index < layout.size - 1; index += 1) {
-      const coordinate = minCenter + lotSize / 2 + roadWidth / 2 + index * pitch;
-      addOutlinedBox(
-        this.world,
-        new THREE.Vector3(roadWidth, 0.12, citySpan),
-        new THREE.Vector3(coordinate, 0.08, 0),
-        roadMaterial,
-        0.2,
-      );
-      addOutlinedBox(
-        this.world,
-        new THREE.Vector3(citySpan, 0.12, roadWidth),
-        new THREE.Vector3(0, 0.08, coordinate),
-        roadMaterial,
-        0.2,
-      );
-    }
-
-    this.waterMaterial = createCoastalWaterMaterial(this.perimeter.coast.shoreX);
+    this.waterMaterial = createCoastalWaterMaterial(this.perimeter.coast.shoreX, this.renderPolicy.waterDetail);
 
     this.addProceduralRail();
   }
@@ -1541,6 +1554,9 @@ export class City3D {
       this.railCurve,
       this.coastlineCurve,
     );
+    // Reserve the full coarse-cell diagonal: interpolated triangles must not
+    // rise through a road or railway whose centerline samples are flat.
+    this.terrainContext.surfacePadding=this.renderPolicy.compact ? 32/this.renderPolicy.surfaceResolution*Math.SQRT2 : 0;
     this.addTerrainGrass();
   }
 
@@ -1704,53 +1720,21 @@ export class City3D {
   }
 
   async buildRoadDetails(layout, generation) {
-    const { lotSize, roadWidth, pitch } = CITY_METRICS;
-    const minCenter = -((layout.size - 1) * pitch) / 2;
+    const { roadWidth } = CITY_METRICS;
     const jobs = [];
     const roadSource = await this.cloneAsset("roads/straight", { width: 1, depth: 1, exact: true });
     if (generation !== this.worldGeneration) return;
-    const boulevard = createBoulevard(this.bounds), boulevardLength = boulevard.getLength();
-    for(const line of boulevard.curves.filter(curve=>curve.isLineCurve3)) {
-      const length=line.getLength();this.world.add(roadStrip(roadSource,d=>line.getPointAt(d/length),length,roadWidth));
+    for (const {a,b} of layout.streets.edges) {
+      const direction=new THREE.Vector3(b.x-a.x,0,b.z-a.z).normalize();
+      const start=new THREE.Vector3(a.x,.15,a.z).addScaledVector(direction,roadWidth/2);
+      const end=new THREE.Vector3(b.x,.15,b.z).addScaledVector(direction,-roadWidth/2);
+      const curve=new THREE.LineCurve3(start,end),length=curve.getLength();
+      this.world.add(roadStrip(roadSource,d=>curve.getPointAt(d/length),length,roadWidth));
     }
-    const {minX,maxX,minZ,maxZ}=this.bounds,o=1.05;
-    for(const [x,z,rotation] of [[maxX+o,minZ-o,0],[maxX+o,maxZ+o,-Math.PI/2],[minX-o,maxZ+o,Math.PI],[minX-o,minZ-o,Math.PI/2]]) {
-      jobs.push(this.placeAsset("roads/bend",{x,z,y:.145,rotation,fit:{scale:roadWidth}},generation));
+    for (const node of layout.streets.nodes.values()) {
+      const {key,rotation}=streetTile(node,layout.streets);
+      jobs.push(this.placeAsset(key,{x:node.x,z:node.z,y:.16,rotation,fit:{width:roadWidth,depth:roadWidth,height:.2,exact:true}},generation));
     }
-    for (let row = 0; row < layout.size - 1; row += 1) {
-      const z = minCenter + lotSize / 2 + roadWidth / 2 + row * pitch;
-      for (let col = 0; col < layout.size; col += 1) {
-        const x = minCenter + col * pitch;
-        jobs.push(this.placeAsset("roads/straight", {
-          x,
-          y: 0.15,
-          z,
-          rotation: ROAD_TILE_ROTATIONS.horizontal,
-          fit: { width: lotSize, depth: roadWidth, height: 0.18, exact: true },
-        }, generation));
-      }
-    }
-    for (let col = 0; col < layout.size - 1; col += 1) {
-      const x = minCenter + lotSize / 2 + roadWidth / 2 + col * pitch;
-      for (let row = 0; row < layout.size; row += 1) {
-        const z = minCenter + row * pitch;
-        jobs.push(this.placeAsset("roads/straight", {
-          x,
-          y: 0.15,
-          z,
-          rotation: ROAD_TILE_ROTATIONS.vertical,
-          fit: { width: lotSize, depth: roadWidth, height: 0.18, exact: true },
-        }, generation));
-      }
-    }
-    for (let row = 0; row < layout.size - 1; row += 1) {
-      for (let col = 0; col < layout.size - 1; col += 1) {
-        const x = minCenter + lotSize / 2 + roadWidth / 2 + col * pitch;
-        const z = minCenter + lotSize / 2 + roadWidth / 2 + row * pitch;
-        jobs.push(this.placeAsset("roads/crossroad", { x, y: 0.16, z, fit: { width: roadWidth, depth: roadWidth, height: 0.2, exact: true } }, generation));
-      }
-    }
-
     const highwaySign = createHighwaySignTransform(this.perimeter);
     jobs.push(this.placeAsset("roads/highway-sign", {
       x: highwaySign.x,
@@ -1760,19 +1744,6 @@ export class City3D {
       fit: { width: 5, depth: 4.5, height: 4.2 },
     }, generation));
     jobs.push(this.addHighwayRoadAssets(generation));
-    // Join all twelve former street ends to the circulating outer boulevard.
-    for (let i = 0; i < layout.size - 1; i++) {
-      const coordinate = minCenter + lotSize / 2 + roadWidth / 2 + i * pitch;
-      for (const sign of [-1, 1]) {
-        const boundary = sign * this.bounds.maxX;
-        for (const axis of ["x", "z"]) {
-          const start = axis === "x" ? new THREE.Vector3(boundary,0.15,coordinate) : new THREE.Vector3(coordinate,0.15,boundary);
-          const end = start.clone(); end[axis] += sign * 1.05;
-          const c = new THREE.LineCurve3(start,end); this.world.add(roadStrip(roadSource,(d)=>c.getPointAt(d/1.05),1.05,roadWidth));
-          jobs.push(this.placeAsset("roads/crossroad", { x:end.x,z:end.z,y:0.17,fit:{width:roadWidth,depth:roadWidth,exact:true}},generation));
-        }
-      }
-    }
     await Promise.all(jobs);
   }
 
@@ -1838,28 +1809,8 @@ export class City3D {
   }
 
   async addEntity(entity, generation) {
-    const isManager = entity.id === "deploy-manager";
-    const isDocker = entity.id === "docker";
-    const fit = entity.kind === "datastore"
-      ? { width: 3.4, depth: 3.4, height: 4.5 }
-      : isManager
-        ? { width: 3.75, depth: 3.75, height: 7.2 }
-        : isDocker
-          ? { width: 3.15, depth: 3.15, height: 4.4 }
-          : { width: 4.18, depth: 4.18, height: 5.25 };
-    let model;
-    try {
-      model = await this.cloneAsset(entity.modelKey, fit);
-    } catch {
-      model = new THREE.Group();
-      addOutlinedBox(
-        model,
-        new THREE.Vector3(3.3, 2.5, 3.3),
-        new THREE.Vector3(0, 1.25, 0),
-        new THREE.MeshStandardMaterial({ color: COLORS.paperLight, roughness: 1 }),
-      );
-    }
-    if (generation !== this.worldGeneration) return;
+    const model = await buildServiceCampus(entity, (key, dimensions) => this.cloneAsset(key, dimensions));
+    if (generation !== this.worldGeneration) {disposeObject3D(model);return;}
 
     const group = new THREE.Group();
     group.name = `entity:${entity.id}`;
@@ -1868,20 +1819,6 @@ export class City3D {
     model.position.y = 0.02;
     group.add(model);
 
-    const pedestalMaterial = new THREE.MeshStandardMaterial({
-      color: entity.kind === "control" ? COLORS.inkSoft : entity.kind === "datastore" ? 0xd59a75 : 0xdfd7b4,
-      roughness: 0.95,
-    });
-    const pedestal = addOutlinedBox(
-      group,
-      new THREE.Vector3(4.62, 0.14, 4.62),
-      new THREE.Vector3(0, -0.02, 0),
-      pedestalMaterial,
-      0.42,
-    );
-    pedestal.userData.entityId = entity.id;
-
-    if (isDocker) await this.addDockerCargo(group, generation);
     const bounds = new THREE.Box3().setFromObject(group);
     const height = Math.max(2.1, bounds.max.y - group.position.y);
     const labelElement = createTextLabel(entity);
@@ -1911,6 +1848,7 @@ export class City3D {
     this.world.add(group);
     this.entityGroups.set(entity.id, group);
     healthScenery(group);
+    group.userData.healthBarrier.rotation.y=model.rotation.y+Math.PI;
     if (entity.modelKey.startsWith("industrial/building-e") || entity.modelKey.startsWith("industrial/building-m")) {
       this.addSmoke(group, height);
     }
@@ -1940,7 +1878,15 @@ export class City3D {
   }
 
   async buildAmbientWorld(layout, generation) {
-    const vacant = layout.cells.filter((cell) => !layout.occupiedCellKeys.has(`${cell.col}:${cell.row}`));
+    const vacant = layout.activeCells.filter((cell) => !layout.occupiedCellKeys.has(`${cell.col}:${cell.row}`));
+    // Three future plots and at most two pocket parks; the rest stays terrain.
+    const infill=planTownInfill(layout,GHOST_MODEL_KEYS.length);
+    for (const {cell,variant,neighbor} of infill) {
+      const park=await buildPocketPark(cell,variant,(key,fit)=>this.cloneAsset(key,fit));park.userData.neighbor=neighbor;
+      if(generation!==this.worldGeneration){disposeObject3D(park);return;}
+      this.world.add(park);
+    }
+    this.stage.dataset.pocketParks=String(infill.length);
     await Promise.all([
       this.addGhostTown(vacant, generation),
       this.addTerrainTrees(generation),
@@ -2300,6 +2246,7 @@ export class City3D {
   }
 
   select(entityId) {
+    this.labelsDirty=true;
     this.selectedId = entityId;
     for (const [id, group] of this.entityGroups) {
       group.userData.labelElement?.classList.toggle("is-selected", id === entityId);
@@ -2665,7 +2612,7 @@ export class City3D {
     if (this.waterMaterial) {
       this.waterMaterial.uniforms.uTime.value = motionElapsed;
       this.waterMaterial.uniforms.uViewDirection.value.copy(this.camera.position).sub(this.controls.target).normalize();
-      this.waterMaterial.uniforms.uDetail.value = this.controls.getPolarAngle()>1.12 || this.camera.zoom<0.8 ? 8 : this.renderPolicy.waterDetail;
+      this.waterMaterial.uniforms.uDetail.value = Math.min(this.renderPolicy.waterDetail, this.controls.getPolarAngle()>1.12 || this.camera.zoom<0.8 ? 8 : 14);
     }
     this.updateWorldStream();
     const trafficDelta = this.reducedMotion ? 0 : Math.min(0.1, (frameTime - (this.lastTrafficFrame ?? frameTime)) / 1000);
@@ -2673,7 +2620,7 @@ export class City3D {
     for (const lane of [-0.5, 0.5]) advanceLaneTraffic(this.motion.filter((item) => item.trafficLane === lane), trafficDelta);
     const cityVehicles=this.motion.filter(item=>item.cityVehicle);
     if(this.activeDelivery)cityVehicles.push(this.activeDelivery);
-    advanceCityTraffic(cityVehicles,trafficDelta,motionElapsed);
+    advanceCityTraffic(cityVehicles,trafficDelta,motionElapsed,[],this.layout?.streets.junctions??[]);
     if(frameTime-(this.lastTrafficAudit??0)>1000) {
       let conflicts=0;
       for(let i=0;i<cityVehicles.length;i++)for(let j=i+1;j<cityVehicles.length;j++) {
@@ -2684,10 +2631,18 @@ export class City3D {
       this.lastTrafficAudit=frameTime;
     }
     for(const fixture of this.signalFixtures??[]) {
-      const phase=signalPhase(motionElapsed);
+      const phases=fixture.sites.map(site=>signalPhase(motionElapsed,site));
       fixture.group.position.y=2.85+(this.reducedMotion?0:Math.sin(motionElapsed*1.2)*.045);
       for(const lamp of fixture.lamps) {
-        const lit=phase[lamp.axis]===lamp.color;lamp.mesh.material.color.setHex(lit?lamp.hex:0x263c38);
+        let changed=false;
+        phases.forEach((phase,i)=>{
+          const lit=Number(phase[lamp.axis]===lamp.color);
+          if(lamp.states[i]===lit)return;
+          lamp.states[i]=lit;changed=true;
+          lamp.mesh.setColorAt(i*2,lit?lamp.lit:lamp.dim);
+          lamp.mesh.setColorAt(i*2+1,lit?lamp.lit:lamp.dim);
+        });
+        if(changed)lamp.mesh.instanceColor.needsUpdate=true;
       }
     }
 
@@ -2771,7 +2726,7 @@ export class City3D {
       this.stage.dataset.frameBudget=String(Math.round(interval));
       this.lastRenderAudit=frameTime;
     }
-    if (this.reducedMotion || this.labelsDirty || frameTime - (this.lastLabelFrame ?? 0) >= 33) {
+    if (this.labelsDirty || !this.lastLabelFrame) {
       this.labelRenderer.render(this.scene, this.camera); this.lastLabelFrame = frameTime; this.labelsDirty = false;
     }
   }
@@ -2795,6 +2750,7 @@ export class City3D {
       Promise.resolve(pending).then((root) => disposeObject3D(root, { includeShared: true, includeTextures: true })).catch(() => {});
     }
     this.assetCache.clear();
+    this.mobileMaterialCache.clear();
     this.renderer.dispose();
     this.renderer.domElement.remove();
     this.labelRenderer.domElement.remove();

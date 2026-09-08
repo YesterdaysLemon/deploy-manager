@@ -1,5 +1,18 @@
 # Scene refinement and rendering check — 2026-09-04
 
+## Sparse service town follow-up - 2026-09-08
+
+See `docs/procedural-service-town.md` for the current v40 profile and scope.
+On the same captured 15-entity fleet, normal motion and default camera at
+390 x 844 CSS pixels, the renderer counter fell from 713 to approximately
+380 draws per rendered frame (47%). Local WebKit using the iPhone 11 Pro
+viewport reported approximately 372. Vehicle visibility affects the exact
+count. Four-wave fragment shading, shared original palette materials with
+Lambert lighting, omitted mobile ink edges and dirty-only CSS label projection
+also reduce GPU/CPU work. Terrain is 8 x 8 with a conservative road/rail shoulder;
+distant tree candidates are six per chunk. The 30 Hz and DPR 1 limits remain.
+No actual iPhone frame-rate improvement is claimed. Preview only, unpublished.
+
 ## iPhone feedback follow-up — preview v37
 
 The phone profile now gates the entire render/simulation/streaming frame to at

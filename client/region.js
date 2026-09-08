@@ -1,6 +1,5 @@
 import * as THREE from "three";
-import { roadStrip, createBoulevard } from "./transport.js";
-import { SIGNAL_JUNCTION } from "./city-traffic.js";
+import { roadStrip } from "./transport.js";
 import { addPortLife, addGulls, warmVillageWindows } from "./city-life.js";
 import { createFrontage } from "./frontage.js";
 
@@ -29,13 +28,25 @@ export function createRegionalPlan(perimeter, coastline) {
   const villageStreet = [[-11.5, villageZ], [harbor.x - 2.8, villageZ]];
   const station = { x: rail.x + 1.6, z: 0, radius: 1, length: 10.5 };
   const forecourtX=bounds.minX-2.4;
+  // Meet the actual western city street, not the old bounding-square edge.
+  // Pick a mid-block crossing opposite the station's accessible forecourt.
+  const stationStreet=perimeter.streets?.edges
+    .filter(({a,b})=>a.x===b.x && Math.abs((a.z+b.z)/2)<station.length/2)
+    .map(({a,b})=>({x:a.x,z:(a.z+b.z)/2}))
+    .sort((a,b)=>a.x-b.x || Math.abs(a.z)-Math.abs(b.z) || a.z-b.z)[0];
+  const cityAccess=stationStreet ? {
+    width:1.05,
+    crossing:stationStreet,
+    walk:[[bounds.minX-1.98,stationStreet.z],[stationStreet.x-.86,stationStreet.z]],
+  } : null;
   const walks=[
     [[station.x+.55,-3],[forecourtX,-3],[forecourtX,villageZ],[-13.4,villageZ]],
     [[-9.9,villageZ-1.14],[harbor.x-2.8,villageZ-1.14]],
     [[-9.9,villageZ+1.14],[harbor.x-2.8,villageZ+1.14]],
+    ...(cityAccess?[cityAccess.walk]:[]),
   ];
   return {
-    harbor, houses, station, walks,
+    harbor, houses, station, walks, cityAccess,
     roads: [road, villageStreet, [[0, highway.z], [0, bounds.minZ]]],
     pads: [...houses, ...[-4,0,4].map(z=>({x:station.x,z,radius:1})), {x:-11.5,z:villageZ,radius:2}, { x: harbor.x - 1.65, z: harbor.z, radius: 4.8 }],
   };
@@ -184,32 +195,30 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
   const directionSign = signFace("CITY  →", "#266e64", 1.05, 0.48);
   directionSign.position.set(-3.9, 1.25, junctionZ - 1.55); directionSign.rotation.y = -Math.PI / 2;
   rod(new THREE.Vector3(-3.9, 0.2, junctionZ - 1.55), new THREE.Vector3(-3.9, 1.5, junctionZ - 1.55), 0.035, 0x71877d);
-  const signal=new THREE.Group();signal.name="four-sided-hover-signal";signal.position.set(SIGNAL_JUNCTION.x,2.85,SIGNAL_JUNCTION.z);world.add(signal);
-  signal.add(new THREE.Mesh(new THREE.BoxGeometry(.44,.48,.44),material(0x263c38)));
-  const ring=new THREE.Mesh(new THREE.TorusGeometry(.34,.018,5,20),new THREE.MeshBasicMaterial({color:0x7cdbc3}));ring.rotation.x=Math.PI/2;ring.position.y=-.29;signal.add(ring);
+  const sites=city.layout.streets.junctions.filter(j=>j.signaled);
+  const signal=new THREE.Group();signal.name="four-sided-hover-signals";signal.position.y=2.85;world.add(signal);
+  const transform=new THREE.Object3D();
+  const bodies=new THREE.InstancedMesh(new THREE.BoxGeometry(.5,.64,.5),material(0x263c38),sites.length);
+  const rings=new THREE.InstancedMesh(new THREE.TorusGeometry(.35,.018,5,16),new THREE.MeshBasicMaterial({color:0x7cdbc3}),sites.length);
+  sites.forEach((p,i)=>{
+    transform.position.set(p.x,0,p.z);transform.rotation.set(0,0,0);transform.updateMatrix();bodies.setMatrixAt(i,transform.matrix);
+    transform.position.y=-.36;transform.rotation.x=Math.PI/2;transform.updateMatrix();rings.setMatrixAt(i,transform.matrix);
+  });
+  signal.add(bodies,rings);
   const lamps=[];
-  for(let face=0;face<4;face++)for(let index=0;index<3;index++) {
-    const angle=face*Math.PI/2,hex=[0xe96b4f,0xe7ba51,0x53d4a7][index];
-    const mesh=new THREE.Mesh(new THREE.SphereGeometry(.049,6,5),new THREE.MeshBasicMaterial({color:hex}));
-    mesh.position.set(Math.sin(angle)*.24,.14-index*.14,Math.cos(angle)*.24);signal.add(mesh);
-    lamps.push({mesh,hex,axis:face%2?"x":"z",color:["red","amber","green"][index]});
+  for(const axis of ["x","z"])for(let index=0;index<3;index++) {
+    const hex=[0xe96b4f,0xe7ba51,0x53d4a7][index];
+    const mesh=new THREE.InstancedMesh(new THREE.SphereGeometry(.065,6,5),new THREE.MeshBasicMaterial({color:0xffffff}),sites.length*2);
+    sites.forEach((p,i)=>[-1,1].forEach((sign,j)=>{
+      transform.position.set(p.x+(axis==="x"?sign*.27:0),.2-index*.2,p.z+(axis==="z"?sign*.27:0));
+      transform.rotation.set(0,0,0);transform.updateMatrix();mesh.setMatrixAt(i*2+j,transform.matrix);
+    }));
+    signal.add(mesh);lamps.push({mesh,lit:new THREE.Color(hex),dim:new THREE.Color(0x263c38),states:new Int8Array(sites.length).fill(-1),axis,color:["red","amber","green"][index]});
   }
-  city.signalFixtures.push({group:signal,lamps});
-
+  city.signalFixtures.push({group:signal,lamps,sites});
+  city.stage.dataset.signalJunctions=String(sites.length);
   const roadSource = await city.cloneAsset("roads/straight", {width:1,depth:1,exact:true});
   if (generation !== city.worldGeneration) return;
-  const boulevard = createBoulevard(city.bounds);
-  for (const [index,key] of ["cars/taxi","cars/sedan"].entries()) {
-    const car=await asset(key,0,0.18,0,0.68,1.4,0.75);
-    if (!car || generation !== city.worldGeneration) return;
-    const points=Array.from({length:160},(_,i)=> {
-      const t=i/160,p=boulevard.getPointAt(t),v=boulevard.getTangentAt(t);
-      return p.addScaledVector(new THREE.Vector3(-v.z,0,v.x).normalize(),index ? -0.42 : 0.42);
-    });
-    city.motion.push({object:car,curve:new THREE.CatmullRomCurve3(points,true,"centripetal"),speed:index ? -0.009 : 0.012,
-      cityVehicle:true,bodyWidth:.68,bodyLength:1.4,cruiseSpeed:index?1:1.2,
-      offset:index ? 0.64 : 0.14,rotationOffset:index ? Math.PI : 0,wrap:true});
-  }
   for (const road of plan.roads) for (let i=1;i<road.length;i++) {
     const c = new THREE.LineCurve3(new THREE.Vector3(road[i-1][0],0.15,road[i-1][1]),new THREE.Vector3(road[i][0],0.15,road[i][1]));
     const length=c.getLength(); world.add(roadStrip(roadSource,d=>c.getPointAt(d/length),length,1.72));
@@ -233,7 +242,7 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
     asset("suburban/tree-small", house.x - 1.05, 0.16, house.z - 1.3, 0.8, 0.8, 1.8);
   }
 
-  for(const walk of plan.walks)for(let i=1;i<walk.length;i++)exactPath({x:walk[i-1][0],z:walk[i-1][1]},{x:walk[i][0],z:walk[i][1]},.45,0xd8ceb2,.145);
+  for(const walk of plan.walks)for(let i=1;i<walk.length;i++)exactPath({x:walk[i-1][0],z:walk[i-1][1]},{x:walk[i][0],z:walk[i][1]},walk===plan.cityAccess?.walk?plan.cityAccess.width:.45,0xd8ceb2,.145);
   // A city-facing halt with a continuous, step-free forecourt connection.
   box("station-platform", station.x, 0.28, station.z, 1.2, 0.45, station.length, 0xc5c4b0);
   box("platform-safety-line", station.x - 0.44, 0.512, 0, 0.07, 0.012, 10.2, 0xf4cf65);
@@ -248,7 +257,10 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
   box("station-ramp-landing",(station.x+.12+forecourtEdge)/2,.135,5.55,forecourtEdge-station.x+.2,.16,.65,0xd7d1b7);
   const ramp=new THREE.Mesh(new THREE.BoxGeometry(.65,.08,2.4),material(0xc5c4b0));
   ramp.name="station-access-ramp";ramp.position.set(station.x+.12,.32,4.4);ramp.rotation.x=.13;world.add(ramp);
-  for(let i=0;i<7;i++)box("station-pedestrian-crossing",city.bounds.minX-1.84+i*.24,.21,0,.12,.012,.55,0xe9e5ce);
+  if(plan.cityAccess) {
+    const {crossing,width}=plan.cityAccess;
+    for(let i=0;i<7;i++)box("station-pedestrian-crossing",crossing.x-.6+i*.2,.183,crossing.z,.12,.012,width,0xe9e5ce);
+  }
 
   // Quay, two timber fingers, piles and fenders make the boats read as berthed.
   box("harbor-quay", harbor.x - 0.55, 0.12, harbor.z, 2.9, 0.48, harbor.depth, 0xb8b9a5);

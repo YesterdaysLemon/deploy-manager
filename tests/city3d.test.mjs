@@ -12,8 +12,8 @@ test("phones and touch tablets have bounded pixels, geometry and frame work", ()
     assert.equal(profile.compact,true);
     assert.equal(profile.shadows,false);
     assert.equal(profile.frameMs,1000/30);
-    assert.equal(profile.surfaceResolution,12);
-    assert.equal(profile.waterDetail,8);
+    assert.equal(profile.surfaceResolution,8);
+    assert.equal(profile.waterDetail,4);
     const ratio=renderPixelRatio(profile,device.width,852,3);
     assert.ok(device.width*852*ratio**2<=650001);
     assert.ok(ratio<=1);
@@ -63,7 +63,7 @@ import { batchStaticScenery } from "../client/render-batch.js";
 import { createFrontage } from "../client/frontage.js";
 import { MapTapGesture, clampMapLabel } from "../client/interaction.js";
 import { railSchedule, portSchedule, createHarborApproach } from "../client/city-life.js";
-import { SIGNAL_JUNCTION, advanceCityTraffic, signalPhase, vehiclePose, vehiclesOverlap, laneCurve } from "../client/city-traffic.js";
+import { SIGNAL_JUNCTION, advanceCityTraffic, signalPhase, signalOffset, vehiclePose, vehiclesOverlap, laneCurve } from "../client/city-traffic.js";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const topology = JSON.parse(readFileSync(new URL("../config/public-topology.json", import.meta.url), "utf8"));
@@ -85,6 +85,21 @@ test("frontages terminate at the actual straight or circular kerb without intrud
   assert.ok(plan.station.x>perimeter.rail.x,"station must face the city");
   assert.ok(plan.station.x+.6<perimeter.bounds.minX-1.91,"platform must clear boulevard");
   assert.ok(plan.walks.length>=3);
+  for(const count of [0,10,35]) {
+    const layout=createPlotLayout({...topology,routes:[...topology.routes,...Array.from({length:count},(_,i)=>({id:`station-neighbor-${i}`}))]});
+    const p=createPerimeterBands(layout),region=createRegionalPlan(p,createTransitCurves(p).coastline),access=region.cityAccess;
+    assert.ok(access && region.walks.includes(access.walk),'station needs a reserved city connection');
+    const [start,end]=access.walk;
+    assert.equal(start[0],p.bounds.minX-1.98,'path joins the forecourt edge');
+    assert.ok(Math.abs(start[1])+access.width/2<5.8,'path meets the accessible forecourt');
+    assert.equal(end[0],access.crossing.x-CITY_METRICS.roadWidth/2);
+    assert.ok(layout.streets.edges.some(({a,b})=>a.x===access.crossing.x && b.x===a.x && Math.abs((a.z+b.z)/2-access.crossing.z)<1e-8),'crossing must be on a real street');
+    for(let i=0;i<=20;i++) {
+      const x=start[0]+(end[0]-start[0])*i/20,z=start[1];
+      assert.ok(x-access.width/2>p.rail.x+p.rail.width/2,'city path crosses the railway');
+      for(const cell of layout.activeCells)assert.ok(Math.abs(x-cell.x)>CITY_METRICS.lotSize/2 || Math.abs(z-cell.z)>CITY_METRICS.lotSize/2+access.width/2,'path cuts through a building plot');
+    }
+  }
 });
 
 test("map gesture classification rejects drags, pinches and cancelled pointers",()=>{
@@ -125,22 +140,21 @@ test("harbor schedule transfers a parcel before its delivery truck departs",()=>
 });
 
 for(const dispatchAt of [10,40,80]) test(`production courier loops deliver without collision or deadlock at phase ${dispatchAt}`,()=>{
-  const layout=createPlotLayout(topology),docker=layout.entities.find(e=>e.id==="docker"),targets=chooseAmbientDeliveryTargets(layout);
+  const fleet=dispatchAt===80?{...topology,routes:[...topology.routes,{id:"animator",plot:{x:2.5,z:-1.5}},{id:"herald"}]}:topology;
+  const layout=createPlotLayout(fleet),docker=layout.entities.find(e=>e.id==="docker"),targets=chooseAmbientDeliveryTargets(layout);
   const access=createStreetAccess(docker,targets[0],layout,"horizontal");
   const items=targets.map((target,i)=> {
     const out=createStreetRoutePoints(docker,target,layout,{startAccess:access}),back=createStreetRoutePoints(target,docker,layout,{endAccess:access});
     return {curve:laneCurve(streetCurve([...out,...back.slice(1)],.255)),speed:1,offset:i/3,bodyWidth:.7,bodyLength:1.5,cruiseSpeed:.85+i*.12};
   });
-  const loop=createBoulevard(createPerimeterBands(layout).bounds);
-  for(let i=0;i<2;i++)items.push({curve:laneCurve(loop,i?-.42:.42),speed:i?-1:1,offset:i?.64:.14,bodyWidth:.68,bodyLength:1.4,cruiseSpeed:i?1:1.2});
-  advanceCityTraffic(items,0,0);const starts=items.map(item=>item.cityDistance);
+  advanceCityTraffic(items,0,0,[],layout.streets.junctions);const starts=items.map(item=>item.cityDistance);
   const releaseAccess=createStreetAccess(docker,layout.entities.find(e=>e.id==="caddy"),layout,"vertical");
   const delivery={curve:laneCurve(streetCurve(createStreetRoutePoints(docker,targets[0],layout,{startAccess:releaseAccess}),.31)),once:true,cityDistance:0,offset:0,speed:1,bodyWidth:.7,bodyLength:1.5,cruiseSpeed:2};
   let dispatched=false,completed=false,completedAt=Infinity;
   for(let frame=0;frame<15000;frame++) {
     const time=frame/60;
     if(!dispatched && time>dispatchAt && items.every(item=>!vehiclesOverlap(vehiclePose(delivery,0),vehiclePose(item,item.cityDistance)))) {items.push(delivery);dispatched=true;}
-    advanceCityTraffic(items,1/60,time);
+    advanceCityTraffic(items,1/60,time,[],layout.streets.junctions);
     for(let i=0;i<items.length;i++)for(let j=i+1;j<items.length;j++)assert.equal(vehiclesOverlap(vehiclePose(items[i],items[i].cityDistance),vehiclePose(items[j],items[j].cityDistance),0),false);
     if(dispatched && !completed && delivery.cityDistance>delivery.curve.getLength()-.02){completed=true;completedAt=time;items.splice(items.indexOf(delivery),1);}
   }
@@ -471,17 +485,17 @@ test("the clear default view uses continuous protected terrain and an analytic o
   assert.match(source, /new THREE\.ShaderMaterial/);
 });
 
-test("the boulevard closes outside every plot and leaves transport corridors clear", () => {
-  const p = createPerimeterBands(createPlotLayout(topology)), loop = createBoulevard(p.bounds);
-  assert.ok(loop.getPointAt(0).distanceTo(loop.getPointAt(1)) < 1e-9);
-  assert.ok(loop.getTangentAt(0.00001).dot(loop.getTangentAt(0.99999)) > 0.999);
-  const transit = createTransitCurves(p), context=createTerrainContext(p,transit.highway,transit.rail,transit.coastline);
-  for (const v of loop.getSpacedPoints(400)) {
-    const dx=Math.max(p.bounds.minX-v.x,0,v.x-p.bounds.maxX), dz=Math.max(p.bounds.minZ-v.z,0,v.z-p.bounds.maxZ);
-    assert.ok(Math.hypot(dx,dz) > CITY_METRICS.roadWidth/2, "boulevard clips a lot corner");
-    assert.ok(terrainHeightAt(v.x,v.z,context) < 0.09, "boulevard buried in terrain");
-    assert.ok(v.x+CITY_METRICS.roadWidth/2 < coastXAt(v.z,p.coast.shoreX), "boulevard touches water");
-    assert.ok(Math.abs(v.x-p.rail.x) > (CITY_METRICS.roadWidth+p.rail.width)/2, "boulevard clips rail");
+test("sparse streets clear every plot, the terrain and perimeter transport", () => {
+  const layout=createPlotLayout(topology),p=createPerimeterBands(layout),transit=createTransitCurves(p),context=createTerrainContext(p,transit.highway,transit.rail,transit.coastline);
+  for(const {a,b} of layout.streets.edges)for(let i=0;i<=12;i++) {
+    const x=a.x+(b.x-a.x)*i/12,z=a.z+(b.z-a.z)*i/12;
+    for(const cell of layout.activeCells) {
+      const dx=Math.max(0,Math.abs(x-cell.x)-CITY_METRICS.lotSize/2),dz=Math.max(0,Math.abs(z-cell.z)-CITY_METRICS.lotSize/2);
+      assert.ok(Math.hypot(dx,dz)>=CITY_METRICS.roadWidth/2-1e-8,"street clips a plot");
+    }
+    assert.ok(terrainHeightAt(x,z,context)<.14,"street buried in terrain");
+    assert.ok(x+CITY_METRICS.roadWidth/2<coastXAt(z,p.coast.shoreX),"street touches water");
+    assert.ok(Math.abs(x-p.rail.x)>(CITY_METRICS.roadWidth+p.rail.width)/2,"street clips rail");
   }
 });
 
@@ -630,4 +644,52 @@ test("the curated Three.js scene references local models from every requested Ke
     assert.ok(ASSET_URLS[key], `missing requested scene asset ${key}`);
   }
   assert.ok(existsSync(`${ROOT}/public/city3d.bundle.js`));
+});
+
+
+test('expanded junctions stop on red and slow-frame substeps preserve traffic time',()=>{
+  const junction={x:20.91,z:13.94,key:'outer',signaled:true};
+  const make=()=>({curve:new THREE.LineCurve3(new THREE.Vector3(junction.x-8,.2,junction.z+.42),new THREE.Vector3(junction.x+8,.2,junction.z+.42)),once:true,speed:1,offset:0,cityDistance:0,cruiseSpeed:1,bodyWidth:.7,bodyLength:1.5});
+  const red=make();
+  for(let i=0;i<100;i++)advanceCityTraffic([red],.1,28-signalOffset(junction),[],[junction]);
+  assert.ok(vehiclePose(red,red.cityDistance).x+red.bodyLength/2<=junction.x-1.2);
+  const slow=make(),fast=make();
+  for(let i=0;i<30;i++)advanceCityTraffic([slow],.1,(i+1)*.1,[],[]);
+  for(let i=0;i<180;i++)advanceCityTraffic([fast],1/60,(i+1)/60,[],[]);
+  assert.ok(Math.abs(slow.cityDistance-fast.cityDistance)<1e-8);
+  for(let i=0;i<80;i++)advanceCityTraffic([red],.1,39-signalOffset(junction),[],[junction]);
+  assert.ok(vehiclePose(red,red.cityDistance).x>junction.x+2);
+});
+
+
+test('coarse phone terrain triangles stay below the railway and highway',()=>{
+  const layout=createPlotLayout(topology),p=createPerimeterBands(layout),transit=createTransitCurves(p),context=createTerrainContext(p,transit.highway,transit.rail,transit.coastline);
+  const resolution=cityRenderPolicy({width:390}).surfaceResolution;
+  context.surfacePadding=32/resolution*Math.SQRT2;
+  const tiles=new Map(),ray=new THREE.Raycaster(),material=new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
+  for(const curve of [transit.rail,transit.highway])for(const point of curve.getSpacedPoints(220)) {
+    const cx=Math.floor(point.x/32),cz=Math.floor(point.z/32),key=`${cx}:${cz}`;
+    if(!tiles.has(key))tiles.set(key,new THREE.Mesh(createSurfaceTile(cx,cz,false,{shoreX:p.coast.shoreX,heightAt:(x,z)=>terrainHeightAt(x,z,context),colorAt:()=>new THREE.Color()},resolution),material));
+    ray.set(new THREE.Vector3(point.x,30,point.z),new THREE.Vector3(0,-1,0));
+    const hit=ray.intersectObject(tiles.get(key))[0];
+    assert.ok(hit && hit.point.y<point.y-.02,`terrain buried transport at ${point.x},${point.z}`);
+  }
+  for(const mesh of tiles.values())mesh.geometry.dispose();material.dispose();
+});
+
+
+test('neighboring junctions have stable distinct signal schedules with safe clearance',()=>{
+  const layout=createPlotLayout(topology),sites=layout.streets.junctions.filter(j=>j.signaled);
+  assert.ok(new Set(sites.map(signalOffset)).size>=6);
+  for(let time=0;time<36;time+=.25) {
+    const phases=sites.map(site=>signalPhase(time,site));
+    assert.ok(new Set(phases.map(p=>`${p.x}:${p.z}`)).size>=2,'whole city switched together');
+    for(const phase of phases)assert.ok(!(phase.x==='green' && phase.z==='green'));
+  }
+  for(const site of sites) {
+    const offset=signalOffset(site);
+    assert.deepEqual(signalPhase(26.5-offset,site),{x:'red',z:'red'});
+    assert.equal(signalPhase(25-offset,site).x,'amber');
+    assert.deepEqual(signalPhase(3,site),signalPhase(3,{...site,key:'reordered'}));
+  }
 });

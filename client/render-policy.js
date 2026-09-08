@@ -6,9 +6,9 @@ export function cityRenderPolicy({ width, coarsePointer = false }) {
     maxPixelRatio: compact ? 1 : 1.5,
     frameMs: compact ? 1000 / 30 : 0,
     shadows: !compact,
-    surfaceResolution: compact ? 12 : 24,
-    treeCount: compact ? 18 : 45,
-    waterDetail: compact ? 8 : 14,
+    surfaceResolution: compact ? 8 : 24,
+    treeCount: compact ? 6 : 45,
+    waterDetail: compact ? 4 : 14,
   };
 }
 
