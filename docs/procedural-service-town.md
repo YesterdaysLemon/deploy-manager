@@ -68,3 +68,11 @@ The same captured 15-entity fleet at 390 x 844 CSS pixels measured roughly
 about 372 draws. These are render-work counts on the Windows host, not phone
 FPS or measured GPU time. Actual iPhone smoothness needs a device retest after
 an explicitly requested deployment. This branch is local and unpublished.
+
+
+Preview v41 adds a direct pedestrian connection from the station forecourt to
+the actual western city street, with a mid-block zebra crossing. The approach
+is reserved in the terrain/vegetation plan and adapts to the staggered fleet
+layout. The original suburban walking route remains connected. Geometry checks
+cover the forecourt join, actual street endpoint, plot clearance and railway
+separation across three fleet sizes.

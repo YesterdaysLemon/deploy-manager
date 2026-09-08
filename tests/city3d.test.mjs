@@ -85,6 +85,21 @@ test("frontages terminate at the actual straight or circular kerb without intrud
   assert.ok(plan.station.x>perimeter.rail.x,"station must face the city");
   assert.ok(plan.station.x+.6<perimeter.bounds.minX-1.91,"platform must clear boulevard");
   assert.ok(plan.walks.length>=3);
+  for(const count of [0,10,35]) {
+    const layout=createPlotLayout({...topology,routes:[...topology.routes,...Array.from({length:count},(_,i)=>({id:`station-neighbor-${i}`}))]});
+    const p=createPerimeterBands(layout),region=createRegionalPlan(p,createTransitCurves(p).coastline),access=region.cityAccess;
+    assert.ok(access && region.walks.includes(access.walk),'station needs a reserved city connection');
+    const [start,end]=access.walk;
+    assert.equal(start[0],p.bounds.minX-1.98,'path joins the forecourt edge');
+    assert.ok(Math.abs(start[1])+access.width/2<5.8,'path meets the accessible forecourt');
+    assert.equal(end[0],access.crossing.x-CITY_METRICS.roadWidth/2);
+    assert.ok(layout.streets.edges.some(({a,b})=>a.x===access.crossing.x && b.x===a.x && Math.abs((a.z+b.z)/2-access.crossing.z)<1e-8),'crossing must be on a real street');
+    for(let i=0;i<=20;i++) {
+      const x=start[0]+(end[0]-start[0])*i/20,z=start[1];
+      assert.ok(x-access.width/2>p.rail.x+p.rail.width/2,'city path crosses the railway');
+      for(const cell of layout.activeCells)assert.ok(Math.abs(x-cell.x)>CITY_METRICS.lotSize/2 || Math.abs(z-cell.z)>CITY_METRICS.lotSize/2+access.width/2,'path cuts through a building plot');
+    }
+  }
 });
 
 test("map gesture classification rejects drags, pinches and cancelled pointers",()=>{

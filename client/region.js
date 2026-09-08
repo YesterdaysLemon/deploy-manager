@@ -28,13 +28,25 @@ export function createRegionalPlan(perimeter, coastline) {
   const villageStreet = [[-11.5, villageZ], [harbor.x - 2.8, villageZ]];
   const station = { x: rail.x + 1.6, z: 0, radius: 1, length: 10.5 };
   const forecourtX=bounds.minX-2.4;
+  // Meet the actual western city street, not the old bounding-square edge.
+  // Pick a mid-block crossing opposite the station's accessible forecourt.
+  const stationStreet=perimeter.streets?.edges
+    .filter(({a,b})=>a.x===b.x && Math.abs((a.z+b.z)/2)<station.length/2)
+    .map(({a,b})=>({x:a.x,z:(a.z+b.z)/2}))
+    .sort((a,b)=>a.x-b.x || Math.abs(a.z)-Math.abs(b.z) || a.z-b.z)[0];
+  const cityAccess=stationStreet ? {
+    width:1.05,
+    crossing:stationStreet,
+    walk:[[bounds.minX-1.98,stationStreet.z],[stationStreet.x-.86,stationStreet.z]],
+  } : null;
   const walks=[
     [[station.x+.55,-3],[forecourtX,-3],[forecourtX,villageZ],[-13.4,villageZ]],
     [[-9.9,villageZ-1.14],[harbor.x-2.8,villageZ-1.14]],
     [[-9.9,villageZ+1.14],[harbor.x-2.8,villageZ+1.14]],
+    ...(cityAccess?[cityAccess.walk]:[]),
   ];
   return {
-    harbor, houses, station, walks,
+    harbor, houses, station, walks, cityAccess,
     roads: [road, villageStreet, [[0, highway.z], [0, bounds.minZ]]],
     pads: [...houses, ...[-4,0,4].map(z=>({x:station.x,z,radius:1})), {x:-11.5,z:villageZ,radius:2}, { x: harbor.x - 1.65, z: harbor.z, radius: 4.8 }],
   };
@@ -230,7 +242,7 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
     asset("suburban/tree-small", house.x - 1.05, 0.16, house.z - 1.3, 0.8, 0.8, 1.8);
   }
 
-  for(const walk of plan.walks)for(let i=1;i<walk.length;i++)exactPath({x:walk[i-1][0],z:walk[i-1][1]},{x:walk[i][0],z:walk[i][1]},.45,0xd8ceb2,.145);
+  for(const walk of plan.walks)for(let i=1;i<walk.length;i++)exactPath({x:walk[i-1][0],z:walk[i-1][1]},{x:walk[i][0],z:walk[i][1]},walk===plan.cityAccess?.walk?plan.cityAccess.width:.45,0xd8ceb2,.145);
   // A city-facing halt with a continuous, step-free forecourt connection.
   box("station-platform", station.x, 0.28, station.z, 1.2, 0.45, station.length, 0xc5c4b0);
   box("platform-safety-line", station.x - 0.44, 0.512, 0, 0.07, 0.012, 10.2, 0xf4cf65);
@@ -245,7 +257,10 @@ export async function buildRegionalScenery(city, generation, { heightAt, siteDis
   box("station-ramp-landing",(station.x+.12+forecourtEdge)/2,.135,5.55,forecourtEdge-station.x+.2,.16,.65,0xd7d1b7);
   const ramp=new THREE.Mesh(new THREE.BoxGeometry(.65,.08,2.4),material(0xc5c4b0));
   ramp.name="station-access-ramp";ramp.position.set(station.x+.12,.32,4.4);ramp.rotation.x=.13;world.add(ramp);
-  for(let i=0;i<7;i++)box("station-pedestrian-crossing",city.bounds.minX-1.84+i*.24,.21,0,.12,.012,.55,0xe9e5ce);
+  if(plan.cityAccess) {
+    const {crossing,width}=plan.cityAccess;
+    for(let i=0;i<7;i++)box("station-pedestrian-crossing",crossing.x-.6+i*.2,.183,crossing.z,.12,.012,width,0xe9e5ce);
+  }
 
   // Quay, two timber fingers, piles and fenders make the boats read as berthed.
   box("harbor-quay", harbor.x - 0.55, 0.12, harbor.z, 2.9, 0.48, harbor.depth, 0xb8b9a5);
