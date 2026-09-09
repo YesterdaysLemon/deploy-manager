@@ -2583,10 +2583,6 @@ export class City3D {
     const interval=this.renderPolicy.frameMs;
     if(frameTime-(this.lastBudgetFrame??-Infinity)<interval-.5)return;
     this.lastBudgetFrame=frameTime;
-    if(document.querySelector("#build-city-dialog")?.open) {
-      if(frameTime-(this.lastDialogFrame??0)<250)return;
-      this.lastDialogFrame=frameTime;
-    }
     if(this.worldStream?.pendingCount) {
       this.worldStream.drain(1);
       this.stage.dataset.worldChunks=String(this.worldStream.chunks.size);
@@ -2716,8 +2712,10 @@ export class City3D {
         : group.userData.live ? 1.2 + Math.sin(elapsed * 6) * 0.36 : 1 + Math.sin(elapsed * 2.4 + group.position.x) * 0.08;
       group.userData.beacon.scale.setScalar(pulse);
     }
-    if (this.renderPolicy.shadows && !this.reducedMotion && frameTime - (this.lastShadowFrame ?? 0) >= 100) {
-      this.renderer.shadowMap.needsUpdate = true; this.lastShadowFrame = frameTime;
+    // Moving casters and receivers must use the same pose as their shadow map.
+    // Reusing a 10 Hz map between frames makes vehicle surfaces flash dark.
+    if (this.renderPolicy.shadows && !this.reducedMotion) {
+      this.renderer.shadowMap.needsUpdate = true;
     }
     this.renderer.render(this.scene, this.camera);
     if(frameTime-(this.lastRenderAudit??0)>1000) {
