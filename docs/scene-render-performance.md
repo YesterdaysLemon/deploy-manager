@@ -1,5 +1,45 @@
 # Scene refinement and rendering check — 2026-09-04
 
+## Setup dialog and moving shadows - 2026-09-08
+
+The setup dialog now uses the normal scene frame budget. Previously its open
+state imposed an additional 250 ms gate, visibly stepping the background traffic.
+Desktop shadow maps now refresh after vehicle transforms on every rendered
+normal-motion frame. The previous 100 ms cache left moving receivers sampling
+shadow depths from an older pose, producing flashes on cars and boats. Compact
+devices still omit shadow passes, and reduced motion and hidden-page gates remain.
+The city bundle URL advances to v43 so existing visitors fetch the fix.
+
+Compared the parent release `bb4b73a` and this change with Playwright CLI in
+headed Edge 152 on Windows, NVIDIA RTX 4060 / ANGLE D3D11, 1440 x 1000 CSS pixels,
+DPR 1, normal motion, the same local topology, and default camera. Instrumented
+actual renderer calls over three seconds each for idle, sign hover, keyboard
+focus, keyboard-opened setup dialog, and after closing. Recorded before/after
+WebM clips and inspected consecutive motion frames. Assets were loaded first.
+
+| State | Before FPS | After FPS | Before median interval | After median interval |
+| --- | ---: | ---: | ---: | ---: |
+| Idle | 100 | 100 | 10.0 ms | 10.0 ms |
+| Hover | 100 | 98 | 10.0 ms | 10.0 ms |
+| Focus | 100 | 100 | 10.0 ms | 10.0 ms |
+| Dialog open | 4 | 100 | 250.1 ms | 10.0 ms |
+| Closed | 100 | 100 | 10.0 ms | 10.0 ms |
+
+Idle shadow refreshes increased from 30/300 to 301/301 rendered frames. Median
+render CPU time increased from 4.5 to 5.8 ms; median draw calls increased from
+566 to 803 (vehicle visibility affects the count). The fix has a measurable
+desktop cost; it does not claim better GPU time or physical-phone performance.
+After-change p95 frame intervals across these states were 10.7-10.9 ms.
+
+At 430 x 760 CSS pixels the existing compact budget produced 25 FPS on this
+100 Hz display, consistently across all five states, with zero shadow passes.
+Its DPR 1, 30 Hz ceiling, coarse terrain and four-wave water policy are unchanged.
+
+All 60 Node checks and seven existing browser checks pass, including desktop
+and phone screenshot baselines, reduced motion, keyboard navigation, touch
+labels, orbiting from the setup sign, pinch zoom and release receipt behavior.
+Captures and measurements are under ignored `output/playwright/`.
+
 ## Sparse service town follow-up - 2026-09-08
 
 See `docs/procedural-service-town.md` for the current v40 profile and scope.
