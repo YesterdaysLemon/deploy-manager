@@ -224,6 +224,7 @@ export function applyRegistration(plan, expectedDigest, { write = atomicWrite } 
       fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
       fs.copyFileSync(path.join(plan.root, name), target, fs.constants.COPYFILE_EXCL);
       fs.chmodSync(target, 0o600);
+      if (hash(fs.readFileSync(target)) !== snapshot.fingerprints[name].sha256) reject(`configuration changed during backup: ${name}`);
     }
     fs.writeFileSync(path.join(backup, "receipt.json"), json({ digest: expectedDigest, before: plan.before, created: Object.keys(plan.files).filter(name => !Object.hasOwn(snapshot.contents, name)) }), { mode: 0o600, flag: "wx" });
     for (const [name, contents] of Object.entries(plan.files)) {
@@ -236,11 +237,14 @@ export function applyRegistration(plan, expectedDigest, { write = atomicWrite } 
     }
     return { registered: plan.app.id, digest: expectedDigest, backup, deploymentStarted: false };
   } catch (error) {
+    const restoreErrors = [];
     for (const name of written.reverse()) {
-      if (Object.hasOwn(snapshot.contents, name)) atomicWrite(path.join(plan.root, name), snapshot.contents[name], snapshot.fingerprints[name]);
-      else fs.unlinkSync(path.join(plan.root, name));
+      try {
+        if (Object.hasOwn(snapshot.contents, name)) atomicWrite(path.join(plan.root, name), fs.readFileSync(path.join(backup, name)), snapshot.fingerprints[name]);
+        else fs.unlinkSync(path.join(plan.root, name));
+      } catch { restoreErrors.push(name); }
     }
-    throw new Error(`${error.message}${backup ? `; backup: ${backup}` : ""}`, { cause: error });
+    throw new Error(`${error.message}${restoreErrors.length ? `; manual restore required: ${restoreErrors.join(", ")}` : ""}${backup ? `; backup: ${backup}` : ""}`, { cause: error });
   } finally { fs.rmdirSync(lock); }
 }
 

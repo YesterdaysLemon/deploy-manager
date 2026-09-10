@@ -3,7 +3,7 @@
 Use `scripts/register-app.mjs` on the Linux VPS from a reviewed checkout. It
 plans and applies additive Deploy Manager configuration without installing a
 privileged entrypoint. The webhook and automatic updater never invoke it.
-Node 22, Git, Docker, `id`, `runuser` (when root) and `ss` are required.
+Node 20 or newer, Git, Docker, `id`, `runuser` (when root) and `ss` are required.
 
 Prepare a version 1 spec with **one app** using `examples/fleet.json`. Use the
 installed manager port and hostname. Inspect the fleet, Caddy configuration,
