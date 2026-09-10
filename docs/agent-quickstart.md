@@ -45,6 +45,10 @@ the target host read-only or ask the operator.
 
 ## Preparation sequence
 
+For an existing fleet, use [add-app.md](add-app.md) and its additive registration
+command. A one-app setup bundle must not replace the installed fleet files.
+The sequence below describes generating a fresh fleet bundle.
+
 1. Copy `examples/fleet.json` outside the repository's tracked files and fill
    it with inspected values. Do not include any secret values.
 2. Run `npm run setup:agent -- --from <fleet.json> --check`. Resolve every

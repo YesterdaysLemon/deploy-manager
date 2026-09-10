@@ -58,6 +58,9 @@ small stop/remove/start cutover window; it is not a zero-downtime guarantee.
 
 ## Prepare a setup bundle
 
+Adding to an installed fleet? Use the [additive registration workflow](docs/add-app.md)
+to inspect conflicts, review the diff, back up and apply one app's configuration.
+
 The same validated fleet specification drives the webhook allowlist, per-app
 runtime settings, Caddy proposal, CI starters, public topology, active health
 targets, and procedural Three.js city. It has two front ends:
