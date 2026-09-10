@@ -346,61 +346,11 @@ function caddyfile(spec) {
 }
 
 function workflow(app) {
-  return `name: Validate and deploy ${app.name}
-
-on:
-  push:
-    branches:
-      - ${yamlQuote(app.branch)}
-
-permissions:
-  contents: read
-
-jobs:
-  validate-and-notify:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Validate application
-        run: |
-          # Replace this line with the repository's real tests and build.
-          echo "Configure validation before enabling deployment" >&2
-          exit 1
-      - name: Notify Deploy Manager
-        env:
-          DEPLOY_WEBHOOK_SECRET: \${{ secrets.DEPLOY_WEBHOOK_SECRET }}
-          DEPLOY_WEBHOOK_URL: \${{ secrets.DEPLOY_WEBHOOK_URL }}
-          GITHUB_EVENT_NAME: \${{ github.event_name }}
-          GITHUB_REF_NAME: \${{ github.ref_name }}
-          GITHUB_REPOSITORY: \${{ github.repository }}
-          GITHUB_SHA: \${{ github.sha }}
-        run: |
-          test -n "$DEPLOY_WEBHOOK_URL"
-          test -n "$DEPLOY_WEBHOOK_SECRET"
-          payload="$(node -e 'const p={event:process.env.GITHUB_EVENT_NAME,branch:process.env.GITHUB_REF_NAME,repo:process.env.GITHUB_REPOSITORY,sha:process.env.GITHUB_SHA};process.stdout.write(JSON.stringify(p))')"
-          signature="$(node -e 'const c=require("crypto");process.stdout.write("sha256="+c.createHmac("sha256",process.env.DEPLOY_WEBHOOK_SECRET).update(process.argv[1]).digest("hex"))' "$payload")"
-          response="$(curl --fail-with-body --silent --show-error \\
-            --request POST "$DEPLOY_WEBHOOK_URL" \\
-            --header "Content-Type: application/json" \\
-            --header "X-GitHub-Event: push" \\
-            --header "X-Hub-Signature-256: $signature" \\
-            --data "$payload")"
-          job_id="$(node -e 'const response=JSON.parse(process.argv[1]);if(!response?.job?.id||!response?.receipt)process.exit(1);process.stdout.write(response.job.id)' "$response")"
-          receipt="$(node -e 'const response=JSON.parse(process.argv[1]);process.stdout.write(response.receipt)' "$response")"
-          receipt_url="$(node -e 'const webhook=new URL(process.argv[1]);process.stdout.write(new URL(process.argv[2],webhook.origin).toString())' "$DEPLOY_WEBHOOK_URL" "$receipt")"
-          echo "Deploy Manager accepted job $job_id"
-          for attempt in $(seq 1 600); do
-            job="$(curl --fail-with-body --silent --show-error "$receipt_url")"
-            status="$(node -e 'const response=JSON.parse(process.argv[1]);process.stdout.write(response?.job?.status??"unknown")' "$job")"
-            case "$status" in
-              succeeded) echo "Deploy Manager job $job_id succeeded"; exit 0 ;;
-              failed|rolled-back|interrupted) echo "Deploy Manager job $job_id ended with $status" >&2; exit 1 ;;
-            esac
-            sleep 2
-          done
-          echo "Deploy Manager job $job_id did not finish within 20 minutes" >&2
-          exit 1
-`;
+  const template = fs.readFileSync(new URL("../examples/github-actions/deploy.yml", import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  return template
+    .replace("name: Validate and deploy", `name: ${yamlQuote(`Validate and deploy ${app.name}`)}`)
+    .replaceAll('["main"]', `[${yamlQuote(app.branch)}]`)
+    .replace("refs/heads/main", `refs/heads/${app.branch}`);
 }
 
 function receipt(spec, generatedAt) {
@@ -415,7 +365,7 @@ ${appRows}
 
 ## Review before installation
 
-1. Replace the fail-closed placeholder in every generated GitHub workflow with the app's real tests and build.
+1. Replace the fail-closed placeholder in every generated GitHub workflow with the app's real tests and build, then set the repository variable \`DEPLOY_ENABLED=true\`. Pushes and manual runs deploy only the configured branch; pull requests validate only.
 2. Verify every repository path, owner, hostname, and port against the target VPS.
 3. Replace every secret placeholder in \`deploy-manager.env\` on the VPS; never commit that edited file.
 4. Review \`apps.json\`, \`apps/*.env\`, \`public-topology.json\`, and \`caddy/Caddyfile\` as one bundle.
