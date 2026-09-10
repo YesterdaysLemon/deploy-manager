@@ -1,0 +1,17 @@
+# Managed by al-stack. Keep extended prose in AGENTS.md.
+"schema" = 1
+
+["project"]
+"id" = "dafc4599-c764-47a0-a337-99cbfef22f5d"
+"name" = "deploy-manager"
+"status" = "experimental"
+"profile" = "web"
+"purpose" = "Release control plane for Dockerized apps on one Linux VPS"
+
+["stack"]
+"version" = "0.1.0"
+"revision" = "11eac15f6a8a0dc76f06ef97c7c3a27c7f668e0a"
+
+["commands"]
+"test" = "npm test"
+"check" = "npm run check:ci"
