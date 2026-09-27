@@ -40,6 +40,8 @@ test("additive registration preserves fleet, inferred plots, settings, modes and
   assert.deepEqual(after.routes[0], { ...before.routes[0], plot: { x: 0.5, z: -1.5 } });
   assert.notDeepEqual(after.routes.at(-1).plot, after.routes[0].plot);
   assert.deepEqual(after.routes[1], before.routes[1]);
+  // The new site's own Caddy file (installed as /etc/caddy/sites/<hostname>.caddy).
+  assert.equal(plan.caddy, "# New app (aaa-new)\nnew.example.com {\n\treverse_proxy 127.0.0.1:3030\n}\n");
   const digest = planDigest(plan);
   assert.equal(planDigest(planRegistration(plan.input, snapshot)), digest);
   const result = applyRegistration(plan, digest);
@@ -141,6 +143,8 @@ test("Linux CLI plans and explicitly applies a reviewed fixture with real checko
   assert.equal(planned.status, 0, planned.stderr);
   assert.equal(fs.existsSync(path.join(root, "apps", "aaa-new.env")), false);
   const receipt = JSON.parse(planned.stdout);
+  assert.match(fs.readFileSync(path.join(output, "caddy", "sites", "new.example.com.caddy"), "utf8"), /reverse_proxy 127\.0\.0\.1:3030/);
+  assert.equal(fs.existsSync(path.join(output, "Caddyfile.addition")), false);
   const applied = run(["--apply", path.join(output, "plan.json"), "--expect", receipt.digest]);
   assert.equal(applied.status, 0, applied.stderr);
   assert.equal(JSON.parse(applied.stdout).registered, "aaa-new");

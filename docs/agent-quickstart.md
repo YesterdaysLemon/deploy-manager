@@ -69,7 +69,8 @@ The sequence below describes generating a fresh fleet bundle.
    webhook secrets are configured. Push and manual dispatch deploy only the
    configured branch; pull requests run validation only. Manual dispatch sends
    the manager's `push` release event using nonreserved `DEPLOY_*` variables.
-7. Review the generated Caddy proposal. Do not
+7. Review the generated Caddy site files (`caddy/sites/<hostname>.caddy`,
+   installed one per site under `/etc/caddy/sites/`). Do not
    reload the proxy until the operator has verified the port and hostname.
 8. Run `npm test` and `npm run check` in this repository. Run the app's own
    build and tests independently.

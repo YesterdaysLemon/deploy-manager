@@ -335,14 +335,29 @@ function managerEnv(spec) {
   return `${lines.join("\n")}\n`;
 }
 
-function caddyfile(spec) {
-  const blocks = spec.apps.map((app) => `${app.hostname} {
-  reverse_proxy 127.0.0.1:${app.publicPort}
-}`);
-  blocks.push(`${spec.manager.hostname} {
-  reverse_proxy 127.0.0.1:${spec.manager.port}
-}`);
-  return `${blocks.join("\n\n")}\n`;
+// Caddy keeps one file per site: /etc/caddy/Caddyfile imports sites/*.caddy,
+// and each site's routes are /etc/caddy/sites/<hostname>.caddy. Adding or
+// changing a site touches only its own file (history in git at /etc/caddy).
+export const CADDY_MAIN = `# Each site's routes live in sites/<hostname>.caddy, one file per site.
+# Add or change a site by editing only its own file, then:
+#   sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+#   sudo git -C /etc/caddy add -A && sudo git -C /etc/caddy commit -m '<what changed>'
+#   sudo systemctl reload caddy
+import sites/*.caddy
+`;
+
+// One site's file, installed as /etc/caddy/sites/<hostname>.caddy.
+export function caddySite(hostname, port, label) {
+  return `# ${label}\n${hostname} {\n\treverse_proxy 127.0.0.1:${port}\n}\n`;
+}
+
+export const caddySitePath = (hostname) => `sites/${hostname}.caddy`;
+
+function caddyFiles(spec) {
+  const files = [["caddy/Caddyfile", CADDY_MAIN]];
+  for (const app of spec.apps) files.push([`caddy/${caddySitePath(app.hostname)}`, caddySite(app.hostname, app.publicPort, `${app.name} (${app.id})`)]);
+  files.push([`caddy/${caddySitePath(spec.manager.hostname)}`, caddySite(spec.manager.hostname, spec.manager.port, "Deploy Manager webhook")]);
+  return files;
 }
 
 function workflow(app) {
@@ -368,7 +383,7 @@ ${appRows}
 1. Replace the fail-closed placeholder in every generated GitHub workflow with the app's real tests and build, then set the repository variable \`DEPLOY_ENABLED=true\`. Pushes and manual runs deploy only the configured branch; pull requests validate only.
 2. Verify every repository path, owner, hostname, and port against the target VPS.
 3. Replace every secret placeholder in \`deploy-manager.env\` on the VPS; never commit that edited file.
-4. Review \`apps.json\`, \`apps/*.env\`, \`public-topology.json\`, and \`caddy/Caddyfile\` as one bundle.
+4. Review \`apps.json\`, \`apps/*.env\`, \`public-topology.json\`, and \`caddy/\` as one bundle. Caddy keeps one file per site: \`caddy/Caddyfile\` (it imports \`sites/*.caddy\`) and \`caddy/sites/<hostname>.caddy\` install under \`/etc/caddy/\`.
 5. Back up the existing site configuration before copying anything under \`/etc\`.
 6. Stop for explicit operator approval before sudo, systemd, Caddy, DNS, secret, or container changes.
 
@@ -383,7 +398,7 @@ export function generateBundle(input, generatedAt = new Date().toISOString()) {
     ["apps.json", `${JSON.stringify(appsJson(spec), null, 2)}\n`],
     ["deploy-manager.env", managerEnv(spec)],
     ["public-topology.json", `${JSON.stringify(publicTopology(spec, generatedAt), null, 2)}\n`],
-    ["caddy/Caddyfile", caddyfile(spec)],
+    ...caddyFiles(spec),
     ["SETUP-RECEIPT.md", receipt(spec, generatedAt)],
   ]);
   for (const app of spec.apps) {

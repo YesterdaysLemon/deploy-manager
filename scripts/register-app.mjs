@@ -5,7 +5,7 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { generateBundle, normalizeFleetSpec, writeBundle } from "./setup.mjs";
+import { caddySite, caddySitePath, generateBundle, normalizeFleetSpec, writeBundle } from "./setup.mjs";
 import { CONTROL_PLOT_ADDRESSES, normalizePlotAddress, stablePlotAddresses } from "../client/plot-layout.js";
 
 const ENV_KEYS = new Set(["APP_ID", "REPO_DIR", "REPO_USER", "APP_PORT", "CANDIDATE_APP_PORT", "CONTAINER_NAME", "CANDIDATE_CONTAINER_NAME", "IMAGE_NAME", "DEPLOY_MANAGER_PORT"]);
@@ -160,7 +160,7 @@ export function planRegistration(input, snapshot) {
   };
   return { version: 1, root: snapshot.root, input: spec, before: snapshot.fingerprints, files, pinned,
     workflow: bundle.files.get(`github/${app.id}-deploy.yml`),
-    caddy: `${app.hostname} {\n  reverse_proxy 127.0.0.1:${app.publicPort}\n}\n`,
+    caddy: caddySite(app.hostname, app.publicPort, `${app.name} (${app.id})`),
     app };
 }
 
@@ -273,8 +273,9 @@ function main(argv) {
     const plan = planRegistration(JSON.parse(fs.readFileSync(args["--from"], "utf8")), snapshotConfig(args["--config"] ?? "/etc/deploy-manager"));
     inspectHost(plan.app);
     const digest = planDigest(plan);
-    const files = new Map([["plan.json", json(plan)], ["Caddyfile.addition", plan.caddy], ["deploy.yml", plan.workflow],
-      ["REVIEW.md", `# Add ${plan.app.id}\n\nPlan SHA256: ${digest}\n\nTarget: ${plan.root}\n\nAdds one app; pins existing inferred plots: ${plan.pinned.join(", ") || "none"}.\n\nCompare before/ and after/ with git diff --no-index. Review Caddyfile.addition and deploy.yml separately. See docs/add-app.md for secret provisioning, service activation and release verification.\n`]]);
+    const site = caddySitePath(plan.app.hostname);
+    const files = new Map([["plan.json", json(plan)], [`caddy/${site}`, plan.caddy], ["deploy.yml", plan.workflow],
+      ["REVIEW.md", `# Add ${plan.app.id}\n\nPlan SHA256: ${digest}\n\nTarget: ${plan.root}\n\nAdds one app; pins existing inferred plots: ${plan.pinned.join(", ") || "none"}.\n\nCompare before/ and after/ with git diff --no-index. Review caddy/${site} and deploy.yml separately: the site file installs as /etc/caddy/${site} (the Caddyfile imports sites/*.caddy; no other site's file changes). See docs/add-app.md for secret provisioning, Caddy, service activation and release verification.\n`]]);
     for (const [name, contents] of Object.entries(plan.files)) {
       files.set(`after/${name}`, contents);
       if (Object.hasOwn(plan.before, name)) files.set(`before/${name}`, fs.readFileSync(path.join(plan.root, name), "utf8"));

@@ -19,7 +19,16 @@ test("fleet setup generates one reviewable, secret-free bundle", () => {
   const bundle = generateBundle(exampleFleet(), generatedAt);
 
   assert.equal(bundle.spec.apps.length, 2);
-  assert.equal(bundle.files.size, 10);
+  assert.equal(bundle.files.size, 13);
+  // Caddy: one file per site, imported by the main Caddyfile.
+  assert.match(bundle.files.get("caddy/Caddyfile"), /^import sites\/\*\.caddy$/m);
+  for (const app of bundle.spec.apps) {
+    const site = bundle.files.get(`caddy/sites/${app.hostname}.caddy`);
+    assert.ok(site, `site file for ${app.hostname}`);
+    assert.ok(site.includes(`\n${app.hostname} {\n\treverse_proxy 127.0.0.1:${app.publicPort}\n}\n`), site);
+  }
+  const manager = bundle.files.get(`caddy/sites/${bundle.spec.manager.hostname}.caddy`);
+  assert.ok(manager.includes(`\n${bundle.spec.manager.hostname} {\n\treverse_proxy 127.0.0.1:${bundle.spec.manager.port}\n}\n`), manager);
   assert.ok(bundle.files.has("apps/portfolio.env"));
   assert.ok(bundle.files.has("github/notes-deploy.yml"));
 

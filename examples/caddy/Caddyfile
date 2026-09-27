@@ -1,24 +1,6 @@
-example.com, www.example.com {
-	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
-		X-Content-Type-Options "nosniff"
-		Referrer-Policy "strict-origin-when-cross-origin"
-		Permissions-Policy "camera=(), microphone=(), geolocation=()"
-	}
-
-	handle {
-		reverse_proxy 127.0.0.1:3000
-	}
-}
-
-app-one.example.com {
-	reverse_proxy 127.0.0.1:3010
-}
-
-app-two.example.com {
-	reverse_proxy 127.0.0.1:3020
-}
-
-deploy.example.com {
-	reverse_proxy 127.0.0.1:9000
-}
+# Each site's routes live in sites/<hostname>.caddy, one file per site.
+# Add or change a site by editing only its own file, then:
+#   sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+#   sudo git -C /etc/caddy add -A && sudo git -C /etc/caddy commit -m '<what changed>'
+#   sudo systemctl reload caddy
+import sites/*.caddy
