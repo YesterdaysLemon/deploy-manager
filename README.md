@@ -143,7 +143,8 @@ A browser request to `/` never enters deployment handling. Conversely, a
 `POST` route and a valid signature. Unknown paths and wrong methods fail
 closed.
 
-Caddy can proxy the whole hostname to the manager without rewriting paths:
+Caddy can proxy the whole hostname to the manager without rewriting paths
+(in the manager's own site file, `sites/deploy.example.com.caddy`):
 
 ```caddyfile
 deploy.example.com {
@@ -224,7 +225,8 @@ archive checksums live in
 - `examples/apps.json`: allowlisted apps and GitHub repo names.
 - `examples/apps/*.env`: per-app deployment settings.
 - `examples/github-actions/deploy.yml`: workflow template for app repos.
-- `examples/caddy/Caddyfile`: public app and deploy webhook routing example.
+- `examples/caddy/`: public app and deploy webhook routing example, one file
+  per site (`Caddyfile` imports `sites/*.caddy`).
 - `install/install-on-vps.sh`: simple installer for a fresh VPS setup.
 - `install/systemd/deploy-manager.service`: systemd unit example.
 - `install/sudoers/deploy-manager`: narrow sudoers example.
@@ -358,21 +360,39 @@ DEPLOY_WEBHOOK_SECRET=<same value as APP_ONE_DEPLOY_WEBHOOK_SECRET on the VPS>
 
 ## Caddy
 
-Use Caddy to route public traffic to each app's local-only Docker port:
+Use Caddy to route public traffic to each app's local-only Docker port, with
+one file per site. `/etc/caddy/Caddyfile` only imports the sites:
 
 ```caddyfile
+import sites/*.caddy
+```
+
+and each site's routes are its own file, `/etc/caddy/sites/<hostname>.caddy`:
+
+```caddyfile
+# /etc/caddy/sites/app-one.example.com.caddy
 app-one.example.com {
   reverse_proxy 127.0.0.1:3010
 }
+```
 
-app-two.example.com {
-  reverse_proxy 127.0.0.1:3020
-}
-
+```caddyfile
+# /etc/caddy/sites/deploy.example.com.caddy
 deploy.example.com {
   reverse_proxy 127.0.0.1:9000
 }
 ```
+
+Adding or changing a site touches only its own file, so one app's routing can't
+disturb another's, and nothing needs pasting into a shared file. Keep
+`/etc/caddy` in git (`git init` there once) instead of backup copies: after
+editing a site file, `caddy validate --config /etc/caddy/Caddyfile --adapter
+caddyfile`, commit, then `systemctl reload caddy`. To undo a change, revert
+that file from git (`git -C /etc/caddy checkout <commit> -- sites/<hostname>.caddy`),
+validate and reload; never restore a whole-config backup, which silently drops
+every site added since. The setup and registration helpers emit site files in
+this layout (`caddy/Caddyfile`, `caddy/sites/<hostname>.caddy`); see
+`examples/caddy/`.
 
 The app containers should bind only to `127.0.0.1`, not the public interface.
 

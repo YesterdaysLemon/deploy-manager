@@ -60,10 +60,17 @@ only after confirming no registration process is running. Backups are retained.
 
 1. Provision the named webhook secret through the approved credential path in
    the manager environment and app repository. Do not print secret values.
-2. Review `Caddyfile.addition` against the **complete** active Caddy configuration,
-   including imported routes and wildcard hosts. It is an addition, never a
-   replacement for the existing Caddyfile. Validate with `caddy validate`
-   before reloading. Configure DNS within the authorized publishing task.
+2. Review `caddy/sites/<hostname>.caddy` from the bundle against the **complete**
+   active Caddy configuration: `/etc/caddy/Caddyfile` imports
+   `/etc/caddy/sites/*.caddy`, one file per site, so check that no existing site
+   file already claims the hostname (`grep -rl '<hostname>' /etc/caddy/sites`)
+   and watch for wildcard hosts. Install it as
+   `/etc/caddy/sites/<hostname>.caddy`; it changes no other site's file. Validate
+   with `caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile`,
+   commit in `/etc/caddy`'s git (`git -C /etc/caddy add -A && git -C /etc/caddy
+   commit -m 'Add <app>'`), then reload. To undo, delete or revert that one
+   file, validate, commit and reload; never restore a whole-config backup.
+   Configure DNS within the authorized publishing task.
 3. Confirm the release lane is idle before restarting the manager to load its
    new environment. Verify manager health and all existing route probes. The
    helper does not restart services, edit Caddy/DNS/secrets, clone repositories,

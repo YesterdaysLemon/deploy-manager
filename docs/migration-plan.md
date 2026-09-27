@@ -25,5 +25,7 @@ the original path is retired.
 ## Rollback during migration
 
 If the central manager misbehaves, leave the existing deployment service in
-place until the new path is proven. Roll back by restoring the previous Caddy
-config and pointing GitHub Actions back at the old webhook.
+place until the new path is proven. Roll back by reverting the affected site's
+own Caddy file from `/etc/caddy`'s git history (validate, commit, reload) and
+pointing GitHub Actions back at the old webhook. Never restore a whole-config
+backup: it would drop every site added since it was taken.

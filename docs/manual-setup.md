@@ -51,7 +51,8 @@ apps.json                  public webhook allowlist
 apps/<app-id>.env          root-side rollout settings
 deploy-manager.env         service settings plus secret placeholders
 public-topology.json       display-safe generated city inventory
-caddy/Caddyfile            proposed routes, not an applied configuration
+caddy/Caddyfile            imports sites/*.caddy (one file per site)
+caddy/sites/<host>.caddy   each site's proposed routes, not an applied configuration
 github/*-deploy.yml        fail-closed workflow starters
 SETUP-RECEIPT.md           exact review boundary and next steps
 ```
@@ -69,7 +70,9 @@ copying anything:
 1. every hostname, repository, branch, checkout path, owner, and health path;
 2. that every production and candidate port is unused and loopback-only;
 3. that optional runtime env files and Docker networks already exist;
-4. that Caddy has no conflicting hostname or route;
+4. that Caddy has no conflicting hostname or route (on a server already
+   running Caddy, compare each `caddy/sites/<host>.caddy` with the site files
+   under `/etc/caddy/sites/`; install new sites as their own files there);
 5. that the app checkout is dedicated and safe to hard-reset;
 6. that the app health endpoint is meaningful and bounded.
 
@@ -89,7 +92,9 @@ Copy the corresponding secret into the app repository's
 edited `deploy-manager.env` or a real runtime env file.
 
 Apply Caddy, systemd, GitHub secrets, and production container changes only as
-separate operator-approved actions. After restarting the manager, verify:
+separate operator-approved actions. For Caddy, keep `/etc/caddy` in git, add
+`import sites/*.caddy` to `/etc/caddy/Caddyfile` once, and install each site as
+`/etc/caddy/sites/<hostname>.caddy`; validate, commit, then reload. After restarting the manager, verify:
 
 ```bash
 curl --fail http://127.0.0.1:9000/healthz
