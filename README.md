@@ -396,6 +396,35 @@ this layout (`caddy/Caddyfile`, `caddy/sites/<hostname>.caddy`); see
 
 The app containers should bind only to `127.0.0.1`, not the public interface.
 
+## Docker host settings
+
+Every release builds an image on the VPS, so Docker's own settings decide how
+much disk that takes over time. The rollout keeps two images per app (the
+running one and the previous one, its rollback target) and removes older ones
+itself. It does not bound BuildKit's build cache, which grows with every build,
+or container logs. Cap both in `/etc/docker/daemon.json`:
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" },
+  "builder": {
+    "gc": {
+      "enabled": true,
+      "defaultMaxUsedSpace": "6GB",
+      "defaultReservedSpace": "2GB",
+      "defaultMinFreeSpace": "20GB"
+    }
+  }
+}
+```
+
+(Those `builder.gc` keys are Docker 28's; older versions use
+`defaultKeepStorage`.) Check the file with `dockerd --validate --config-file
+/etc/docker/daemon.json` before restarting Docker: a bad file stops Docker, and
+every app with it. The settings apply when Docker restarts. Cap the systemd
+journal as well (`SystemMaxUse=500M` in `/etc/systemd/journald.conf.d/`).
+
 ## Manual Checks
 
 Check the manager:
