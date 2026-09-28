@@ -28,11 +28,12 @@ License: MIT
 
 1. A green app workflow sends an HMAC-signed payload containing event, branch, repository, and a 40-character Git SHA.
 2. The unprivileged HTTP service validates the exact route, app allowlist, signature, event, branch, repository, and SHA.
-3. It durably appends a job receipt, returns HTTP 202 with a job ID, and deduplicates semantic replays.
+3. It durably appends a job receipt, returns HTTP 202 with a job ID, and deduplicates semantic replays; a replay of a job that ended `interrupted` starts one fresh job (`retryOf` names the old one).
 4. A global queue admits one host-level deployment at a time; a narrow sudo wrapper selects the root-owned per-app configuration.
 5. The deploy script fetches the configured branch, proves it resolves to the requested SHA, and emits factual release phases.
 6. It builds a SHA-tagged image, starts a candidate on a spare loopback port, and checks health.
-7. It replaces production, checks health again, and restores the previous image if start-up or health fails.
+7. It replaces production, checks health again, and restores the previous image if start-up or health fails, or if the manager is stopped mid-swap.
+8. The self-updater restarts the manager only while `/api/releases` reports `lane.busy: false`. After a restart, a job cut short is marked `interrupted`, and its receipt records whether production was untouched, healthy, or restored to the previous image.
 
 Read-only evidence is available at `/api/topology`, `/api/releases`, and `/api/releases/<job-id>`. The public city labels ambient traffic as ambient and reserves its primary release choreography for journaled phase events. “Watch a release” is a demonstration and never mutates production.
 

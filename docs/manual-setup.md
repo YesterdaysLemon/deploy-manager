@@ -94,7 +94,7 @@ edited `deploy-manager.env` or a real runtime env file.
 Apply Caddy, systemd, GitHub secrets, and production container changes only as
 separate operator-approved actions. For Caddy, keep `/etc/caddy` in git, add
 `import sites/*.caddy` to `/etc/caddy/Caddyfile` once, and install each site as
-`/etc/caddy/sites/<hostname>.caddy`; validate, commit, then reload. On a fresh server, also cap Docker's build cache and logs and the journal (README, "Docker host settings"). After restarting the manager, verify:
+`/etc/caddy/sites/<hostname>.caddy`; validate, commit, then reload. On a fresh server, also cap Docker's build cache and logs and the journal (README, "Docker host settings"). On a running server, restart the manager only while `/api/releases` reports `"lane":{"busy":false,…}`, since a restart stops any rollout in flight. After restarting the manager, verify:
 
 ```bash
 curl --fail http://127.0.0.1:9000/healthz

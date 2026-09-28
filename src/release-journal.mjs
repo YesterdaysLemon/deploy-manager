@@ -13,6 +13,14 @@ import path from "node:path";
 const TERMINAL_STATUSES = new Set(["succeeded", "failed", "rolled-back", "interrupted"]);
 const VALID_STATUSES = new Set(["queued", "running", ...TERMINAL_STATUSES]);
 const PHASE_PATTERN = /^[a-z][a-z0-9-]{0,31}$/;
+// Outcomes printed by `deploy-app-run --recover` as release_recovery=<outcome>.
+const RECOVERY_PHASES = new Map([
+  ["not-needed", "recovery-not-needed"],
+  ["healthy", "production-healthy"],
+  ["restored", "production-restored"],
+  ["busy", "recovery-skipped"],
+  ["failed", "recovery-failed"],
+]);
 
 function cleanPhase(value, fallback) {
   return typeof value === "string" && PHASE_PATTERN.test(value) ? value : fallback;
@@ -105,6 +113,7 @@ export class ReleaseJournal {
         appId: record.appId,
         sha: record.sha,
         replayKey: record.replayKey,
+        ...(record.retryOf ? { retryOf: record.retryOf } : {}),
         source: record.source ?? "signed-webhook",
         status: "queued",
         phase: "accepted",
@@ -141,10 +150,20 @@ export class ReleaseJournal {
   }
 
   accept({ appId, sha, replayKey, source = "signed-webhook" }) {
-    const existingId = this.replays.get(replayKey);
-    if (existingId) return { duplicate: true, job: cloneJob(this.jobs.get(existingId)) };
+    const existing = this.jobs.get(this.replays.get(replayKey));
+    // An interrupted job never reached a verdict, so the same signed request
+    // may run once more as a new job; any other outcome is final.
+    if (existing && existing.status !== "interrupted") return { duplicate: true, job: cloneJob(existing) };
     const jobId = this.idFactory();
-    this.append({ type: "accepted", jobId, appId, sha, replayKey, source });
+    this.append({
+      type: "accepted",
+      jobId,
+      appId,
+      sha,
+      replayKey,
+      source,
+      ...(existing ? { retryOf: existing.id } : {}),
+    });
     return { duplicate: false, job: this.get(jobId) };
   }
 
@@ -210,6 +229,7 @@ export function publicReleaseJob(job, options = {}) {
     appId: job.appId,
     release: job.sha.slice(0, 7).toLowerCase(),
     ...(options.includeSha ? { sha: job.sha.toLowerCase() } : {}),
+    ...(job.retryOf ? { retryOf: job.retryOf } : {}),
     source: job.source,
     ...(job.source === "manager-observation" ? {
       evidence: "running-release-local-health",
@@ -231,14 +251,42 @@ export function publicReleaseJob(job, options = {}) {
 }
 
 export class ReleaseCoordinator {
-  constructor({ journal, runner }) {
+  constructor({ journal, runner, recoverer = null }) {
     if (!journal || typeof runner !== "function") throw new Error("release coordinator needs a journal and runner");
+    if (recoverer !== null && typeof recoverer !== "function") throw new Error("release recoverer must be a function");
     this.journal = journal;
     this.runner = runner;
+    this.recoverer = recoverer;
     this.queue = [];
+    this.recoveries = [];
     this.active = null;
     this.idleWaiters = [];
-    this.journal.recoverInterrupted();
+    const interrupted = this.journal.recoverInterrupted();
+    if (this.recoverer) {
+      // Only a job that reached the root rollout can have touched production.
+      // Recoveries hold the release lane ahead of any new request.
+      const jobsByApp = new Map();
+      for (const job of interrupted) {
+        if (!job.events.some((event) => event.status === "running")) continue;
+        jobsByApp.set(job.appId, [...(jobsByApp.get(job.appId) ?? []), job.id]);
+      }
+      this.recoveries = [...jobsByApp].map(([appId, jobIds]) => ({ kind: "recovery", appId, jobIds }));
+      if (this.recoveries.length > 0) queueMicrotask(() => void this.drain());
+    }
+  }
+
+  get activeRelease() {
+    return this.active?.kind === "recovery" ? null : this.active;
+  }
+
+  lane() {
+    const recovering = this.recoveries.length + (this.active?.kind === "recovery" ? 1 : 0);
+    return {
+      busy: Boolean(this.active) || this.queue.length > 0 || this.recoveries.length > 0,
+      running: this.activeRelease ? 1 : 0,
+      queued: this.queue.length,
+      recovering,
+    };
   }
 
   submit(details) {
@@ -256,9 +304,21 @@ export class ReleaseCoordinator {
   }
 
   async drain() {
-    if (this.active || this.queue.length === 0) return;
-    const item = this.queue.shift();
+    if (this.active) return;
+    const item = this.recoveries.shift() ?? this.queue.shift();
+    if (!item) return;
     this.active = item;
+    try {
+      if (item.kind === "recovery") await this.recover(item);
+      else await this.release(item);
+    } finally {
+      this.active = null;
+      if (this.recoveries.length > 0 || this.queue.length > 0) queueMicrotask(() => void this.drain());
+      else this.resolveIdle();
+    }
+  }
+
+  async release(item) {
     this.journal.transition(item.jobId, { status: "running", phase: "starting" });
     try {
       await this.runner(item, (phase) => {
@@ -273,18 +333,27 @@ export class ReleaseCoordinator {
         phase: rolledBack ? "rollback" : "failed",
         error: rolledBack ? "production-restored" : "deploy-failed",
       });
-    } finally {
-      this.active = null;
-      if (this.queue.length > 0) queueMicrotask(() => void this.drain());
-      else this.resolveIdle();
     }
+  }
+
+  // The receipt stays interrupted: the requested SHA was not released. The
+  // extra event records what the root wrapper found and did to production.
+  async recover(item) {
+    let outcome = null;
+    try {
+      outcome = await this.recoverer(item);
+    } catch {
+      // No wrapper, or a root plane that predates --recover.
+    }
+    const phase = RECOVERY_PHASES.get(outcome) ?? "recovery-unavailable";
+    for (const jobId of item.jobIds) this.journal.transition(jobId, { status: "interrupted", phase });
   }
 
   publicJobs(limit = 12) {
     const queuedPositions = new Map(this.queue.map((item, index) => [item.jobId, index + 1]));
     return this.journal.list(limit).map((job) => ({
       ...publicReleaseJob(job),
-      queuePosition: job.id === this.active?.jobId ? 0 : queuedPositions.get(job.id) ?? null,
+      queuePosition: job.id === this.activeRelease?.jobId ? 0 : queuedPositions.get(job.id) ?? null,
     }));
   }
 
@@ -295,19 +364,19 @@ export class ReleaseCoordinator {
 
   liveAppIds() {
     return [...new Set([
-      ...(this.active ? [this.active.appId] : []),
+      ...(this.activeRelease ? [this.activeRelease.appId] : []),
       ...this.queue.map((item) => item.appId),
     ])];
   }
 
   stateForApp(appId) {
-    if (this.active?.appId === appId) return "running";
+    if (this.activeRelease?.appId === appId) return "running";
     if (this.queue.some((item) => item.appId === appId)) return "queued";
     return null;
   }
 
   waitForIdle() {
-    if (!this.active && this.queue.length === 0) return Promise.resolve();
+    if (!this.lane().busy) return Promise.resolve();
     return new Promise((resolve) => this.idleWaiters.push(resolve));
   }
 

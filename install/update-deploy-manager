@@ -39,6 +39,7 @@ MAX_ARCHIVE_BYTES="${DEPLOY_MANAGER_UPDATE_MAX_ARCHIVE_BYTES:-52428800}"
 TEST_MODE="${DEPLOY_MANAGER_UPDATE_TEST_MODE:-0}"
 REQUESTED_SHA=""
 PREFLIGHT_ONLY="0"
+LANE_STATUS_ONLY="0"
 
 log() {
   printf '%s %s %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$PROGRAM" "$*"
@@ -50,7 +51,7 @@ fail() {
 }
 
 usage() {
-  echo "usage: $PROGRAM [--preflight] [--sha <40-character-main-sha>]" >&2
+  echo "usage: $PROGRAM [--preflight | --lane-status] [--sha <40-character-main-sha>]" >&2
   exit 64
 }
 
@@ -58,6 +59,10 @@ while [ "$#" -gt 0 ]; do
   case "$1" in
     --preflight)
       PREFLIGHT_ONLY="1"
+      shift
+      ;;
+    --lane-status)
+      LANE_STATUS_ONLY="1"
       shift
       ;;
     --sha)
@@ -147,6 +152,102 @@ EOF
     "$url"
 }
 
+resolve_manager_endpoint() {
+  if [ ! -r "$MANAGER_ENV" ]; then
+    fail "manager_env_not_readable path=$MANAGER_ENV"
+  fi
+
+  # Read only the service bind settings in a subshell. The manager environment
+  # also contains application secrets and must not be allowed to overwrite the
+  # updater's paths or control variables.
+  manager_network="$({
+    DEPLOY_MANAGER_HOST="127.0.0.1"
+    DEPLOY_MANAGER_PORT="9000"
+    # shellcheck disable=SC1090
+    . "$MANAGER_ENV"
+    printf '%s\n%s\n' "$DEPLOY_MANAGER_HOST" "$DEPLOY_MANAGER_PORT"
+  })"
+  DEPLOY_MANAGER_HOST="$(printf '%s\n' "$manager_network" | sed -n '1p')"
+  DEPLOY_MANAGER_PORT="$(printf '%s\n' "$manager_network" | sed -n '2p')"
+  case "$DEPLOY_MANAGER_HOST" in
+    ""|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:-]*)
+      fail "invalid_manager_host"
+      ;;
+  esac
+  case "$DEPLOY_MANAGER_PORT" in
+    ""|*[!0123456789]*) fail "invalid_manager_port" ;;
+  esac
+  if [ "$DEPLOY_MANAGER_PORT" -lt 1 ] || [ "$DEPLOY_MANAGER_PORT" -gt 65535 ]; then
+    fail "invalid_manager_port"
+  fi
+  health_url="${DEPLOY_MANAGER_UPDATE_HEALTH_URL:-http://${DEPLOY_MANAGER_HOST}:${DEPLOY_MANAGER_PORT}/healthz}"
+  releases_url="${DEPLOY_MANAGER_UPDATE_RELEASES_URL:-http://${DEPLOY_MANAGER_HOST}:${DEPLOY_MANAGER_PORT}/api/releases?limit=50}"
+}
+
+# Prints idle, busy, inactive, or unknown. The running manager's own API is the
+# authority on its release lane; the root updater never parses the journal the
+# unprivileged service writes. An answer can only postpone a restart.
+release_lane_state() {
+  if ! lane_json="$(curl --fail --silent --max-time 5 --max-filesize 1048576 "$releases_url" 2>/dev/null)"; then
+    if systemctl is-active --quiet "$SERVICE"; then
+      echo unknown
+    else
+      # With no running manager nothing can accept or run a release, and
+      # systemd lets a stop that is still in progress finish before restarting.
+      echo inactive
+    fi
+    return 0
+  fi
+
+  printf '%s' "$lane_json" | node -e '
+let input = "";
+process.stdin.on("data", (chunk) => (input += chunk));
+process.stdin.on("end", () => {
+  let body = null;
+  try { body = JSON.parse(input); } catch {}
+  const lane = body?.lane;
+  let state = "unknown";
+  if (lane && typeof lane.busy === "boolean") {
+    state = lane.busy ? "busy" : "idle";
+  } else if (Array.isArray(body?.releases)) {
+    // Managers that predate the lane field: any unfinished receipt is busy.
+    const unfinished = body.releases.some((release) => ["queued", "running"].includes(release?.status));
+    state = unfinished ? "busy" : "idle";
+  }
+  process.stdout.write(state);
+});
+' || echo unknown
+}
+
+# Restarting the service stops everything in its cgroup, including a root
+# rollout mid-cutover. A busy lane is an ordinary skip; the next timer run
+# retries. A lane that cannot be read while the service runs fails closed.
+require_idle_release_lane() {
+  checkpoint="$1"
+  lane_state="$(release_lane_state)"
+  case "$lane_state" in
+    idle) ;;
+    inactive) log "release_lane=inactive service=$SERVICE checkpoint=$checkpoint" ;;
+    busy)
+      log "skip reason=release_lane_busy checkpoint=$checkpoint sha=$target_sha"
+      exit 0
+      ;;
+    *) fail "release_lane_unknown checkpoint=$checkpoint sha=$target_sha url=$releases_url" ;;
+  esac
+}
+
+if [ "$LANE_STATUS_ONLY" = "1" ]; then
+  command -v systemctl >/dev/null 2>&1 || fail "missing_command_systemctl"
+  resolve_manager_endpoint
+  lane_state="$(release_lane_state)"
+  log "release_lane=$lane_state service=$SERVICE"
+  case "$lane_state" in
+    idle|inactive) exit 0 ;;
+    busy) exit 75 ;;
+    *) exit 1 ;;
+  esac
+fi
+
 repo_json="$(github_get "$API_ROOT/repos/$REPOSITORY")" || fail "repository_lookup_failed"
 default_branch="$(printf '%s' "$repo_json" | node -e '
 let input = "";
@@ -232,6 +333,9 @@ if [ -L "$ACTIVE_LINK" ]; then
     exit 0
   fi
 fi
+
+resolve_manager_endpoint
+require_idle_release_lane before_download
 
 archive="$(mktemp "$STATE_DIR/archive.${target_sha}.XXXXXX.tar.gz")"
 cleanup_archive="$archive"
@@ -324,35 +428,6 @@ fi
 chown -R root:root "$stage"
 chmod -R go-w "$stage"
 
-if [ ! -r "$MANAGER_ENV" ]; then
-  fail "manager_env_not_readable path=$MANAGER_ENV"
-fi
-
-# Read only the service bind settings in a subshell. The manager environment
-# also contains application secrets and must not be allowed to overwrite the
-# updater's paths or control variables.
-manager_network="$({
-  DEPLOY_MANAGER_HOST="127.0.0.1"
-  DEPLOY_MANAGER_PORT="9000"
-  # shellcheck disable=SC1090
-  . "$MANAGER_ENV"
-  printf '%s\n%s\n' "$DEPLOY_MANAGER_HOST" "$DEPLOY_MANAGER_PORT"
-})"
-DEPLOY_MANAGER_HOST="$(printf '%s\n' "$manager_network" | sed -n '1p')"
-DEPLOY_MANAGER_PORT="$(printf '%s\n' "$manager_network" | sed -n '2p')"
-case "$DEPLOY_MANAGER_HOST" in
-  ""|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.:-]*)
-    fail "invalid_manager_host"
-    ;;
-esac
-case "$DEPLOY_MANAGER_PORT" in
-  ""|*[!0123456789]*) fail "invalid_manager_port" ;;
-esac
-if [ "$DEPLOY_MANAGER_PORT" -lt 1 ] || [ "$DEPLOY_MANAGER_PORT" -gt 65535 ]; then
-  fail "invalid_manager_port"
-fi
-health_url="${DEPLOY_MANAGER_UPDATE_HEALTH_URL:-http://${DEPLOY_MANAGER_HOST}:${DEPLOY_MANAGER_PORT}/healthz}"
-
 health_check() {
   attempt=1
   while [ "$attempt" -le "$HEALTH_ATTEMPTS" ]; do
@@ -364,6 +439,12 @@ health_check() {
   done
   return 1
 }
+
+# Reload before the final lane check so that only the atomic link swap stands
+# between that check and the restart. Nothing has been activated yet if this
+# fails.
+systemctl daemon-reload || fail "daemon_reload_failed sha=$target_sha"
+require_idle_release_lane before_activation
 
 release="$RELEASE_ROOT/$target_sha"
 if [ -e "$release" ]; then
@@ -383,7 +464,7 @@ rm -f -- "$link_temp"
 ln -s "$release" "$link_temp"
 mv -Tf "$link_temp" "$ACTIVE_LINK"
 
-if systemctl daemon-reload && systemctl restart "$SERVICE" && health_check; then
+if systemctl restart "$SERVICE" && health_check; then
   printf '%s\n' "$target_sha" > "$STATE_DIR/active-sha"
   chmod 0644 "$STATE_DIR/active-sha"
   cleanup_archive=""
@@ -392,6 +473,8 @@ if systemctl daemon-reload && systemctl restart "$SERVICE" && health_check; then
   exit 0
 fi
 
+# The rollback restart is not lane-gated: the manager that would answer is the
+# release that just failed to come up healthy.
 log "activation_failed sha=$target_sha attempting_rollback=${previous_target:-none}" >&2
 if [ -n "$previous_target" ] && [ -d "$previous_target" ]; then
   rollback_link="${ACTIVE_LINK}.rollback.$$"

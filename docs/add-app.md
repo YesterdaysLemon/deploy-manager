@@ -72,7 +72,9 @@ only after confirming no registration process is running. Backups are retained.
    file, validate, commit and reload; never restore a whole-config backup.
    Configure DNS within the authorized publishing task.
 3. Confirm the release lane is idle before restarting the manager to load its
-   new environment. Verify manager health and all existing route probes. The
+   new environment: `curl 'http://127.0.0.1:<port>/api/releases?limit=1'` must
+   show `"lane":{"busy":false,…}`, because a restart stops any rollout in
+   flight. Verify manager health and all existing route probes. The
    helper does not restart services, edit Caddy/DNS/secrets, clone repositories,
    change sudoers, install root scripts or start containers.
 4. Put the reviewed `deploy.yml` into the app repository, replace its deliberate

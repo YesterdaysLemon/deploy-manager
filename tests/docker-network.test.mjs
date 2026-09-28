@@ -97,6 +97,7 @@ return 0
       "HEALTH_SLEEP_SECONDS=0",
       `LOG_FILE=${quote(posix(logFile))}`,
       `LOCK_FILE=${quote(posix(path.join(tmp, "deploy.lock")))}`,
+      `ROLLOUT_STATE_DIR=${quote(posix(path.join(tmp, "rollout")))}`,
     ];
     if (dockerNetwork) lines.push(`DOCKER_NETWORK=${dockerNetwork}`);
     if (containerEnvFile) {

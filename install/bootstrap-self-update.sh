@@ -121,6 +121,15 @@ health_url="http://${DEPLOY_MANAGER_HOST}:${DEPLOY_MANAGER_PORT}/healthz"
 curl --fail --silent --show-error --max-time 5 --output /dev/null "$health_url" ||
   fail "current_manager_health_failed url=$health_url"
 
+# Promoting the root plane replaces the rollout script and ends in a service
+# restart, so it must not start while a release is queued, running, or being
+# recovered. This is the same read-only check the timer uses.
+DEPLOY_MANAGER_UPDATE_CONFIG=/dev/null \
+DEPLOY_MANAGER_ENV_FILE="$MANAGER_ENV" \
+DEPLOY_MANAGER_SERVICE="$SERVICE" \
+  "$STAGING_DIR/install/update-deploy-manager" --lane-status ||
+  fail "release_lane_not_idle"
+
 if [ "$MODE" = "check" ]; then
   log "check_success sha=$source_sha service=$SERVICE health=$health_url"
   echo "BOOTSTRAP_READY sha=$source_sha"
@@ -251,6 +260,18 @@ systemctl daemon-reload
 if ! /usr/local/sbin/update-deploy-manager --sha "$source_sha"; then
   restore_bootstrap
   fail "initial_release_activation_failed backup=$backup_dir"
+fi
+
+# The updater also exits 0 when it skips, for example because a release
+# arrived after the check above. Without an earlier release there is nothing
+# for the service to run; otherwise the timer activates this SHA later.
+active_release="$(readlink -f "$ACTIVE_LINK" 2>/dev/null || true)"
+if [ "$(basename "${active_release:-none}")" != "$source_sha" ]; then
+  if [ -z "$old_active_link" ]; then
+    restore_bootstrap
+    fail "initial_release_not_activated backup=$backup_dir"
+  fi
+  log "activation_deferred sha=$source_sha active=${active_release:-none} reason=updater_skipped"
 fi
 
 if ! systemctl enable --now deploy-manager-update.timer; then

@@ -15,6 +15,13 @@ WorkingDirectory=/opt/deploy-manager-current
 ExecStart=/usr/bin/node /opt/deploy-manager-current/src/server.mjs
 Restart=always
 RestartSec=5
+# Stopping the service signals its whole cgroup, including an in-flight root
+# rollout. deploy-app.sh restores the previous container when that happens
+# mid-cutover; TimeoutStopSec bounds the restore before SIGKILL. Do not use
+# KillMode=process or none: an orphaned rollout would outlive its receipt and
+# race the next manager's release lane.
+KillMode=control-group
+TimeoutStopSec=90s
 
 [Install]
 WantedBy=multi-user.target

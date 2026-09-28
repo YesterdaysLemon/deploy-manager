@@ -83,7 +83,12 @@ completion claim. It returns HTTP `202`, `job.id`, and `receipt`. Poll the
 read-only receipt until it reaches `succeeded`, `failed`, `rolled-back`, or
 `interrupted`, and preserve that job ID in the operator verification receipt.
 Repeating the same semantic app/repository/branch/SHA payload returns the
-original job and does not enqueue another deployment.
+original job and does not enqueue another deployment, unless that job ended
+`interrupted` (the manager restarted mid-release). Then the repeat starts one
+fresh job whose receipt names the old job in `retryOf`, so re-running the same
+workflow is the retry; no new commit is needed. An interrupted receipt's last
+phase says whether production was left untouched, is healthy, or had its
+previous image restored (see [self-update.md](self-update.md#release-lane-and-restarts)).
 
 ## Production boundary
 
@@ -95,6 +100,8 @@ authorizes the exact action:
 - creating or rotating GitHub/VPS secrets;
 - changing DNS, Caddy, firewall rules, or a public route;
 - starting, stopping, replacing, or deleting production containers;
+- restarting the manager, which also requires `/api/releases` to report
+  `lane.busy: false`;
 - running the one-time self-update bootstrap.
 
 The normal rollout intentionally stops and removes the old production container

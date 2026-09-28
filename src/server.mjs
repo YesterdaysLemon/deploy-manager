@@ -621,7 +621,7 @@ function publicTopology() {
       status: "online",
     },
     apps: publicApps,
-    activeDeployments: releaseCoordinator.active ? 1 : 0,
+    activeDeployments: releaseCoordinator.lane().running,
     queuedDeployments: releaseCoordinator.queue.length,
     liveDeployments: liveAppIds,
     releaseCursor: releaseJournal.latestSequence,
@@ -715,15 +715,12 @@ function validatePayload(payload, app) {
   return null;
 }
 
-function runDeploy(appId, payload, app, onPhase = () => {}) {
+// Runs the sudo wrapper and passes each complete stdout line to onLine.
+// Resolves with the exit status; rejects only when the wrapper cannot start.
+function runControlScript(args, env, onLine) {
   return new Promise((resolve, reject) => {
-    const child = spawn(DEPLOY_MANAGER_SCRIPT, [appId, payload.sha], {
-      env: {
-        ...process.env,
-        DEPLOY_APP_ID: appId,
-        DEPLOY_BRANCH: app.branch ?? "master",
-        DEPLOY_SHA: payload.sha,
-      },
+    const child = spawn(DEPLOY_MANAGER_SCRIPT, args, {
+      env: { ...process.env, ...env },
       stdio: ["ignore", "pipe", "pipe"],
     });
 
@@ -733,25 +730,42 @@ function runDeploy(appId, payload, app, onPhase = () => {}) {
       pendingOutput += chunk.toString("utf8");
       const lines = pendingOutput.split(/\r?\n/);
       pendingOutput = lines.pop() ?? "";
-      for (const line of lines) {
-        const match = /(?:^|\s)release_phase=([a-z][a-z0-9-]{0,31})(?:\s|$)/.exec(line);
-        if (match && RELEASE_PHASES.has(match[1])) onPhase(match[1]);
-      }
+      for (const line of lines) onLine(line);
     };
 
     child.stdout?.on("data", inspectOutput);
     child.stderr?.on("data", (chunk) => process.stderr.write(chunk));
 
     child.on("error", reject);
-    child.on("close", (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-
-      reject(new Error(`deploy script exited with status ${code}`));
-    });
+    child.on("close", resolve);
   });
+}
+
+async function runDeploy(appId, payload, app, onPhase = () => {}) {
+  const code = await runControlScript([appId, payload.sha], {
+    DEPLOY_APP_ID: appId,
+    DEPLOY_BRANCH: app.branch ?? "master",
+    DEPLOY_SHA: payload.sha,
+  }, (line) => {
+    const match = /(?:^|\s)release_phase=([a-z][a-z0-9-]{0,31})(?:\s|$)/.exec(line);
+    if (match && RELEASE_PHASES.has(match[1])) onPhase(match[1]);
+  });
+
+  if (code !== 0) throw new Error(`deploy script exited with status ${code}`);
+}
+
+// Asks the root wrapper to finish a production swap that a manager stop cut
+// short. It passes only the app ID; the root-owned cutover record decides the
+// image. Resolves with the reported outcome.
+async function runRecovery(appId) {
+  if (!apps[appId]) throw new Error("app_not_configured");
+  let outcome = null;
+  await runControlScript(["--recover", appId], { DEPLOY_APP_ID: appId }, (line) => {
+    const match = /(?:^|\s)release_recovery=([a-z][a-z-]{0,31})(?:\s|$)/.exec(line);
+    if (match) outcome = match[1];
+  });
+  if (!outcome) throw new Error("recovery_outcome_missing");
+  return outcome;
 }
 
 const apps = loadAppsConfig();
@@ -759,6 +773,7 @@ const releaseJournal = new ReleaseJournal(releaseJournalPath);
 const releaseCoordinator = new ReleaseCoordinator({
   journal: releaseJournal,
   runner: ({ appId, context }, onPhase) => runDeploy(appId, context.payload, context.app, onPhase),
+  recoverer: ({ appId }) => runRecovery(appId),
 });
 
 const probes = probeSettings();
@@ -802,6 +817,8 @@ const server = createServer(async (request, response) => {
     const limit = Math.min(50, Math.max(1, Number(url.searchParams.get("limit")) || 12));
     sendJson(request, response, 200, {
       cursor: releaseJournal.latestSequence,
+      // The root self-updater restarts the manager only while lane.busy is false.
+      lane: releaseCoordinator.lane(),
       releases: releaseCoordinator.publicJobs(limit),
     });
     return;
