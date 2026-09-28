@@ -77,8 +77,10 @@ copying anything:
 6. that the app health endpoint is meaningful and bounded.
 
 For a fresh server, install the base service from the reviewed checkout as
-described in the README. Back up `/etc/deploy-manager` before replacing the
-example configuration with the reviewed bundle. On the VPS, replace every
+described in the README. Put `/etc/deploy-manager` in a local, root-only git
+repository (`git init` once, then commit) before replacing the example
+configuration with the reviewed bundle, and commit each later change instead
+of keeping backup copies. On the VPS, replace every
 `REPLACE_WITH_A_RANDOM_64_HEX_SECRET` value with an independently generated
 secret, for example:
 
