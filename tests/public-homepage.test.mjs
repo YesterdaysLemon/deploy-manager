@@ -8,6 +8,8 @@ import os from "node:os";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { ReleaseJournal, releaseReplayKey } from "../src/release-journal.mjs";
+
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
 function reservePort() {
@@ -185,7 +187,11 @@ test("public release city stays focused and does not leak deploy secrets", async
 
   const releasesResponse = await fetch(`${url}/api/releases`);
   assert.equal(releasesResponse.status, 200);
-  assert.deepEqual(await releasesResponse.json(), { cursor: 0, releases: [] });
+  assert.deepEqual(await releasesResponse.json(), {
+    cursor: 0,
+    lane: { busy: false, running: 0, queued: 0, recovering: 0 },
+    releases: [],
+  });
 
   const missingReleaseResponse = await fetch(`${url}/api/releases/00000000-0000-4000-8000-000000000000`);
   assert.equal(missingReleaseResponse.status, 404);
@@ -258,4 +264,115 @@ test("public release city stays focused and does not leak deploy secrets", async
 
   const topologyPostResponse = await fetch(`${url}/api/topology`, { method: "POST" });
   assert.equal(topologyPostResponse.status, 404);
+});
+
+async function startManager(context, env) {
+  const port = await reservePort();
+  const url = `http://127.0.0.1:${port}`;
+  const child = spawn(process.execPath, [path.join(ROOT, "src", "server.mjs")], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      DEPLOY_MANAGER_APPS_FILE: path.join(ROOT, "examples", "apps.json"),
+      DEPLOY_MANAGER_HOST: "127.0.0.1",
+      DEPLOY_MANAGER_PORT: String(port),
+      DEPLOY_MANAGER_RELEASE_SHA: "f".repeat(40),
+      DEPLOY_MANAGER_PROBES_ENABLED: "false",
+      PORTFOLIO_DEPLOY_WEBHOOK_SECRET: "test-secret-portfolio",
+      APP_ONE_DEPLOY_WEBHOOK_SECRET: "test-secret-one",
+      APP_TWO_DEPLOY_WEBHOOK_SECRET: "test-secret-two",
+      ...env,
+    },
+    stdio: ["ignore", "ignore", "ignore"],
+  });
+  context.after(() => child.kill());
+  await waitForServer(url, child);
+  return url;
+}
+
+// A journal left by a manager that was restarted while app-one was mid-rollout.
+function seedInterruptedRollout(journalFile, payload) {
+  const seed = new ReleaseJournal(journalFile, { idFactory: () => "11111111-1111-4111-8111-111111111111" });
+  const job = seed.accept({ appId: "app-one", sha: payload.sha, replayKey: releaseReplayKey("app-one", payload) }).job;
+  seed.transition(job.id, { status: "running", phase: "promote" });
+  return job.id;
+}
+
+async function pollReceipt(url, jobId, done) {
+  let receipt = null;
+  for (let attempt = 0; attempt < 150; attempt += 1) {
+    receipt = (await (await fetch(`${url}/api/releases/${jobId}`)).json()).job;
+    if (done(receipt)) return receipt;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return receipt;
+}
+
+test("a restarted manager records recovery and lets the same signed request retry", async (context) => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "manager-recovery-"));
+  context.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const payload = { event: "push", branch: "main", repo: "example-org/app-one", sha: "b".repeat(40) };
+  const journalFile = path.join(temporary, "journal.jsonl");
+  const interruptedId = seedInterruptedRollout(journalFile, payload);
+
+  const url = await startManager(context, {
+    DEPLOY_MANAGER_JOURNAL_FILE: journalFile,
+    // No root wrapper here, like a root plane that predates --recover.
+    DEPLOY_MANAGER_SCRIPT: path.join(temporary, "missing-wrapper"),
+  });
+
+  const interrupted = await pollReceipt(url, interruptedId, (job) => job.phase !== "interrupted");
+  assert.equal(interrupted.status, "interrupted");
+  assert.equal(interrupted.phase, "recovery-unavailable");
+  const idle = await (await fetch(`${url}/api/releases`)).json();
+  assert.deepEqual(idle.lane, { busy: false, running: 0, queued: 0, recovering: 0 });
+
+  const body = JSON.stringify(payload);
+  const signature = `sha256=${createHmac("sha256", "test-secret-one").update(body).digest("hex")}`;
+  const request = () => fetch(`${url}/deploy/app-one`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-GitHub-Event": "push", "X-Hub-Signature-256": signature },
+    body,
+  }).then((response) => response.json());
+
+  const retry = await request();
+  assert.equal(retry.accepted, true);
+  assert.equal(retry.duplicate, false);
+  assert.notEqual(retry.job.id, interruptedId);
+  assert.equal(retry.job.retryOf, interruptedId);
+  const finished = await pollReceipt(url, retry.job.id, (job) => !["queued", "running"].includes(job.status));
+  assert.equal(finished.status, "failed");
+
+  const repeat = await request();
+  assert.equal(repeat.duplicate, true);
+  assert.equal(repeat.job.id, retry.job.id);
+});
+
+test("start-up recovery calls the root wrapper with only --recover and the app id", {
+  skip: process.platform === "win32" ? "the fake wrapper is a shell script" : false,
+}, async (context) => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "manager-recovery-"));
+  context.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
+  const journalFile = path.join(temporary, "journal.jsonl");
+  const wrapperLog = path.join(temporary, "wrapper.log");
+  const wrapper = path.join(temporary, "deploy-manager-sudo");
+  fs.writeFileSync(wrapper, `#!/bin/sh
+printf '%s\n' "$*" >> '${wrapperLog}'
+sleep 1
+echo "app=$2 release_recovery=restored"
+`, { mode: 0o755 });
+  const interruptedId = seedInterruptedRollout(journalFile, {
+    event: "push", branch: "main", repo: "example-org/app-one", sha: "c".repeat(40),
+  });
+
+  const url = await startManager(context, { DEPLOY_MANAGER_JOURNAL_FILE: journalFile, DEPLOY_MANAGER_SCRIPT: wrapper });
+  const during = await (await fetch(`${url}/api/releases`)).json();
+  assert.equal(during.lane.busy, true, "the updater must see the lane busy while recovery runs");
+  assert.equal(during.lane.recovering, 1);
+
+  const recovered = await pollReceipt(url, interruptedId, (job) => job.phase !== "interrupted");
+  assert.equal(recovered.status, "interrupted");
+  assert.equal(recovered.phase, "production-restored");
+  assert.equal(fs.readFileSync(wrapperLog, "utf8"), "--recover app-one\n");
+  assert.equal((await (await fetch(`${url}/api/releases`)).json()).lane.busy, false);
 });

@@ -40,6 +40,10 @@ MANAGER_ENV="$TEST_ROOT/deploy-manager.env"
 CONFIG_FILE="$TEST_ROOT/self-update.env"
 HEALTH_STATE="$TEST_ROOT/health-state"
 SYSTEMCTL_MODE="$TEST_ROOT/systemctl-mode"
+# One word per manager /api/releases request, in order; the last one repeats.
+LANE_SCRIPT="$TEST_ROOT/lane-script"
+LANE_CALLS="$TEST_ROOT/lane-calls"
+SERVICE_STATE="$TEST_ROOT/service-state"
 
 BUILD_USER=nobody
 BUILD_GROUP="$(id -gn "$BUILD_USER")"
@@ -116,6 +120,17 @@ case "$url" in
   http://127.0.0.1:9000/healthz)
     [ "$(cat "$FAKE_HEALTH_STATE")" = "ok" ]
     ;;
+  "http://127.0.0.1:9000/api/releases?limit=50")
+    call=$(( $(cat "$FAKE_LANE_CALLS") + 1 ))
+    echo "$call" > "$FAKE_LANE_CALLS"
+    lane="$(tr ' ' '\n' < "$FAKE_LANE_SCRIPT" | sed -n "${call}p")"
+    [ -n "$lane" ] || lane="$(tr ' ' '\n' < "$FAKE_LANE_SCRIPT" | sed -n '$p')"
+    case "$lane" in
+      idle) printf '%s\n' '{"cursor":3,"lane":{"busy":false,"running":0,"queued":0,"recovering":0},"releases":[]}' ;;
+      busy) printf '%s\n' '{"cursor":4,"lane":{"busy":true,"running":1,"queued":1,"recovering":0},"releases":[]}' ;;
+      *) exit 7 ;;
+    esac
+    ;;
   *)
     echo "fake curl: unexpected URL: $url" >&2
     exit 2
@@ -132,7 +147,11 @@ case "${1:-}" in
   daemon-reload)
     [ "$(cat "$FAKE_SYSTEMCTL_MODE")" != "daemon-fail" ]
     ;;
+  is-active)
+    [ "$(cat "$FAKE_SERVICE_STATE")" = "active" ]
+    ;;
   restart)
+    basename "$(readlink -f "$FAKE_ACTIVE_LINK")" >> "$FAKE_RESTART_LOG"
     active_target="$(readlink -f "$FAKE_ACTIVE_LINK")"
     if [ "$(basename "$active_target")" = "$FAKE_TARGET_SHA" ] &&
        [ "$(cat "$FAKE_SYSTEMCTL_MODE")" = "health-fail" ]; then
@@ -149,24 +168,54 @@ esac
 EOF
 chmod 0755 "$FAKE_BIN/systemctl"
 
+RESTART_LOG="$TEST_ROOT/restarts"
+
 export FAKE_ACTIVE_LINK="$ACTIVE_LINK"
 export FAKE_ARCHIVE="$ARCHIVE"
 export FAKE_HEALTH_STATE="$HEALTH_STATE"
 export FAKE_SYSTEMCTL_MODE="$SYSTEMCTL_MODE"
 export FAKE_TARGET_SHA="$TARGET_SHA"
+export FAKE_LANE_SCRIPT="$LANE_SCRIPT"
+export FAKE_LANE_CALLS="$LANE_CALLS"
+export FAKE_SERVICE_STATE="$SERVICE_STATE"
+export FAKE_RESTART_LOG="$RESTART_LOG"
 export DEPLOY_MANAGER_UPDATE_CONFIG="$CONFIG_FILE"
 export DEPLOY_MANAGER_UPDATE_PATH="$FAKE_BIN:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# $1: the manager's lane answers, e.g. "idle" or "idle busy" or "down".
 activate_previous() {
   rm -f -- "$ACTIVE_LINK"
   ln -s "$RELEASE_ROOT/$PREVIOUS_SHA" "$ACTIVE_LINK"
   echo ok > "$HEALTH_STATE"
+  echo "${1:-idle}" > "$LANE_SCRIPT"
+  echo 0 > "$LANE_CALLS"
+  echo active > "$SERVICE_STATE"
+  : > "$RESTART_LOG"
 }
 
 assert_previous_restored() {
   [ "$(readlink -f "$ACTIVE_LINK")" = "$RELEASE_ROOT/$PREVIOUS_SHA" ]
   [ ! -e "$RELEASE_ROOT/$TARGET_SHA" ]
   [ "$(cat "$HEALTH_STATE")" = "ok" ]
+}
+
+# A skipped or refused update leaves no staged release, archive, or restart.
+assert_untouched() {
+  assert_previous_restored
+  [ "$(ls -A "$RELEASE_ROOT")" = "$PREVIOUS_SHA" ]
+  [ -z "$(find "$STATE_DIR" -name 'archive.*' -print 2>/dev/null)" ]
+  [ ! -s "$RESTART_LOG" ]
+}
+
+expect_output() {
+  case "$1" in
+    *"$2"*) ;;
+    *)
+      echo "updater-integration: expected '$2' in:" >&2
+      printf '%s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
 }
 
 activate_previous
@@ -189,6 +238,40 @@ if "$REPOSITORY_ROOT/install/update-deploy-manager" --sha "$TARGET_SHA"; then
   echo "updater-integration: daemon-reload failure unexpectedly succeeded" >&2
   exit 1
 fi
-assert_previous_restored
+assert_untouched
 
-echo "updater-integration: activation and rollback scenarios passed"
+echo success > "$SYSTEMCTL_MODE"
+
+# A release in flight when the timer fires: skip before any work.
+activate_previous busy
+output="$("$REPOSITORY_ROOT/install/update-deploy-manager" --sha "$TARGET_SHA" 2>&1)"
+expect_output "$output" "skip reason=release_lane_busy checkpoint=before_download"
+assert_untouched
+
+# A release accepted while the update was being checked: skip at the last
+# moment, before the link swap and restart.
+activate_previous "idle busy"
+output="$("$REPOSITORY_ROOT/install/update-deploy-manager" --sha "$TARGET_SHA" 2>&1)"
+expect_output "$output" "skip reason=release_lane_busy checkpoint=before_activation"
+[ "$(cat "$LANE_CALLS")" = "2" ]
+assert_untouched
+
+# The manager runs but its lane cannot be read: fail closed.
+activate_previous down
+if output="$("$REPOSITORY_ROOT/install/update-deploy-manager" --sha "$TARGET_SHA" 2>&1)"; then
+  echo "updater-integration: unreadable lane unexpectedly allowed activation" >&2
+  exit 1
+fi
+expect_output "$output" "release_lane_unknown checkpoint=before_download"
+assert_untouched
+
+# No running manager (for example a crash loop): nothing is in flight, so a
+# green release may still replace it.
+activate_previous down
+echo inactive > "$SERVICE_STATE"
+output="$("$REPOSITORY_ROOT/install/update-deploy-manager" --sha "$TARGET_SHA" 2>&1)"
+expect_output "$output" "release_lane=inactive"
+[ "$(readlink -f "$ACTIVE_LINK")" = "$RELEASE_ROOT/$TARGET_SHA" ]
+[ "$(cat "$RESTART_LOG")" = "$TARGET_SHA" ]
+
+echo "updater-integration: activation, rollback, and release-lane scenarios passed"

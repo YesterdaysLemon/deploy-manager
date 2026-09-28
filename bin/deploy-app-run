@@ -1,28 +1,43 @@
 #!/usr/bin/env sh
 set -eu
 
+MODE="deploy"
+if [ "${1:-}" = "--recover" ]; then
+  MODE="recover"
+  shift
+fi
+
 APP_ID="${1:-}"
 REQUESTED_SHA="${2:-}"
 ENV_ROOT="${DEPLOY_MANAGER_APP_ENV_ROOT:-/etc/deploy-manager/apps}"
 DEPLOY_APP_SCRIPT="${DEPLOY_MANAGER_DEPLOY_SCRIPT:-/usr/local/libexec/deploy-manager/deploy-app.sh}"
 
 case "$APP_ID" in
-  ""|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*)
+  ""|-*|*[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-]*)
     echo "deploy-app-run: invalid app id" >&2
     exit 64
     ;;
 esac
 
-case "$REQUESTED_SHA" in
-  ""|*[!0123456789abcdefABCDEF]*)
+if [ "$MODE" = "recover" ]; then
+  # Recovery takes no image or SHA from the caller; the root-owned cutover
+  # record decides what, if anything, is restored.
+  if [ "$#" -ne 1 ]; then
+    echo "deploy-app-run: --recover takes only an app id" >&2
+    exit 64
+  fi
+else
+  case "$REQUESTED_SHA" in
+    ""|*[!0123456789abcdefABCDEF]*)
+      echo "deploy-app-run: expected a 40-character git SHA" >&2
+      exit 64
+      ;;
+  esac
+
+  if [ "${#REQUESTED_SHA}" -ne 40 ]; then
     echo "deploy-app-run: expected a 40-character git SHA" >&2
     exit 64
-    ;;
-esac
-
-if [ "${#REQUESTED_SHA}" -ne 40 ]; then
-  echo "deploy-app-run: expected a 40-character git SHA" >&2
-  exit 64
+  fi
 fi
 
 ENV_FILE="${ENV_ROOT}/${APP_ID}.env"
@@ -38,4 +53,7 @@ if [ ! -x "$DEPLOY_APP_SCRIPT" ]; then
 fi
 
 export ENV_FILE
+if [ "$MODE" = "recover" ]; then
+  exec "$DEPLOY_APP_SCRIPT" --recover
+fi
 exec "$DEPLOY_APP_SCRIPT" "$REQUESTED_SHA"

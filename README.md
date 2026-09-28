@@ -80,8 +80,9 @@ Both commands stop at a local staging bundle. They do not use sudo, write to
 
 The manager itself can optionally follow an exact, green `main` SHA through a
 separate root-owned updater. Releases are versioned and activated atomically;
-the updater rolls back on failed restart or health validation. Root deployment
-scripts and sudo/systemd policy remain manual. See
+the updater rolls back on failed restart or health validation, and it never
+restarts the manager while an app release is queued, running, or being
+recovered. Root deployment scripts and sudo/systemd policy remain manual. See
 [`docs/self-update.md`](docs/self-update.md).
 
 ## Architecture
@@ -121,7 +122,7 @@ separate:
 | `GET`, `HEAD` | `/` | interactive VPS and rollout visualizer |
 | `GET`, `HEAD` | `/city`, `/city/` | compatibility alias for the release city |
 | `GET`, `HEAD` | `/api/topology` | display-safe manager and fleet state |
-| `GET`, `HEAD` | `/api/releases` | recent sanitized release receipts and phase events |
+| `GET`, `HEAD` | `/api/releases` | recent sanitized release receipts, phase events, and release-lane state |
 | `GET`, `HEAD` | `/api/releases/<job-id>` | one sanitized release receipt |
 | `GET`, `HEAD` | `/healthz` | service health probe |
 | `GET`, `HEAD` | `/llms.txt` | machine-readable product and safety overview |
@@ -130,9 +131,20 @@ separate:
 
 A valid deployment request is durably accepted with HTTP `202`, a job ID, and
 a receipt URL before Docker work begins. Semantically identical signed requests
-return the original job instead of running twice. Jobs execute one at a time;
-unfinished receipts are marked interrupted after a manager restart rather than
-silently pretending to have completed.
+return the original job instead of running twice, unless that job ended
+`interrupted`: then the request starts a fresh job whose receipt names the old
+one in `retryOf`, so re-running the same workflow retries the same SHA. Jobs
+execute one at a time; unfinished receipts are marked interrupted after a
+manager restart rather than silently pretending to have completed.
+
+A restart must not cut through a rollout. `/api/releases` reports
+`lane: {busy, running, queued, recovering}`, and the self-updater restarts the
+manager only while `busy` is `false`. If a rollout is stopped anyway, the root
+deploy script restores the previous image during a stop signal; after a hard
+kill, the restarted manager asks the root wrapper to finish that repair
+(`deploy-app-run --recover <app-id>`) and appends the outcome to the
+interrupted receipt. See
+[`docs/self-update.md`](docs/self-update.md#release-lane-and-restarts).
 
 The included GitHub Actions workflow keeps the CI job open after acceptance,
 polls that receipt for up to 20 minutes, and fails unless the terminal state is
@@ -215,7 +227,8 @@ archive checksums live in
 - `public/llms.txt`: machine-readable fit, release contract, and agent route.
 - `config/public-topology.json`: public-safe VPS inventory displayed by the map.
 - `bin/deploy-app.sh`: generic Docker deployment script.
-- `bin/deploy-app-run`: root-side wrapper that maps app IDs to env files.
+- `bin/deploy-app-run`: root-side wrapper that maps app IDs to env files, and
+  runs `--recover <app-id>` to finish an interrupted production swap.
 - `bin/deploy-manager-sudo`: unprivileged wrapper used by the webhook process.
 - `scripts/deploy-app-now.sh`: optional manual deploy helper for an app ID.
 - `scripts/setup.mjs`: interactive and agent-friendly staging bundle generator.
@@ -337,9 +350,11 @@ git reset --hard origin/<branch>
 docker build ...
 docker run candidate on 127.0.0.1:<candidate-port>
 curl candidate health URL
+record the old image in /var/lib/deploy-manager-rollout/<app-id>.cutover
 replace production container
 curl production health URL
-rollback to old image if production start or health fails
+rollback to old image if production start or health fails, or on SIGTERM mid-swap
+clear the cutover record
 ```
 
 Built images are tagged with the exact requested Git SHA, so the running container and
@@ -434,6 +449,9 @@ curl http://127.0.0.1:9000/healthz
 curl http://127.0.0.1:9000/api/releases
 systemctl status deploy-manager --no-pager
 ```
+
+Restart the manager by hand only while `/api/releases` reports
+`"lane":{"busy":false,…}`; a restart stops any rollout in flight.
 
 Check deployed apps:
 

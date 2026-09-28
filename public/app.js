@@ -50,7 +50,19 @@ const PHASE_COPY = Object.freeze({
   rollback: "restoring previous image",
   failed: "release failed",
   interrupted: "manager restarted",
+  "recovery-not-needed": "manager restarted · no swap to repair",
+  "production-healthy": "manager restarted · production healthy",
+  "production-restored": "manager restarted · previous image restored",
+  "recovery-skipped": "manager restarted · rollout still owns the swap",
+  "recovery-failed": "manager restarted · restore failed",
+  "recovery-unavailable": "manager restarted · recovery unavailable",
 });
+
+const RECEIPT_END_PHASES = new Set([
+  "serving", "complete", "failed", "rollback", "interrupted",
+  "recovery-not-needed", "production-healthy", "production-restored",
+  "recovery-skipped", "recovery-failed", "recovery-unavailable",
+]);
 
 const stage = document.querySelector("#city-3d-scene");
 const hostLed = document.querySelector("#host-led");
@@ -358,7 +370,7 @@ function showPhase(phase, target, source = "demo") {
     : PHASE_COPY[phase] ?? "release moving";
   simulationToast.dataset.source = source;
   simulationCopy.textContent = `${source === "observed" ? "OBSERVED" : source === "live" ? "LIVE" : "DEMO"} · ${copy}`;
-  if (["serving", "complete", "failed", "rollback", "interrupted"].includes(phase)) {
+  if (RECEIPT_END_PHASES.has(phase)) {
     toastTimer = window.setTimeout(() => {
       simulationToast.hidden = true;
     }, 2600);

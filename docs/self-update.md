@@ -66,6 +66,100 @@ Immediately before activation, the updater asks GitHub for `main` again and
 abandons the prepared release if a newer commit arrived while checks were
 running. An older green build therefore cannot overwrite a newer branch tip.
 
+The updater also never restarts the manager while an app release is queued,
+running, or being recovered; see [Release lane and restarts](#release-lane-and-restarts).
+
+## Release lane and restarts
+
+Restarting `deploy-manager.service` stops everything in its cgroup, including
+a root `deploy-app.sh` rollout that the manager started through
+`deploy-app-run`. A rollout stopped between `docker stop` and a verified new
+container leaves the app down. The updater therefore asks the running manager
+for its release lane:
+
+```text
+GET http://<DEPLOY_MANAGER_HOST>:<DEPLOY_MANAGER_PORT>/api/releases?limit=50
+{"cursor":…,"lane":{"busy":false,"running":0,"queued":0,"recovering":0},"releases":[…]}
+```
+
+It checks twice: once before downloading anything, and again after the
+release is prepared, immediately before the atomic link swap and restart
+(`daemon-reload` runs before that check, so only the swap separates it from
+the restart).
+
+| Lane answer | Updater behaviour |
+| --- | --- |
+| `lane.busy` is `false` | continue |
+| `lane.busy` is `true` | `skip reason=release_lane_busy checkpoint=before_download` or `checkpoint=before_activation`, exit 0, nothing changed; the next timer run retries |
+| unreadable while the service is active | `failure reason=release_lane_unknown`, nothing changed |
+| unreadable and the service is not active | `release_lane=inactive`, continue, so a crash-looping manager can still be replaced by a green release |
+
+A manager that predates the `lane` field is treated as busy while any listed
+receipt is `queued` or `running`. The restart that rolls back a failed
+activation is not gated: the manager that would answer is the one that failed.
+
+The updater reads only the manager's loopback API, never the journal file the
+unprivileged service writes. A compromised manager can at most postpone
+updates; it cannot make the root updater act.
+
+A request that arrives in the instant between the final check and the restart
+can still be cut short. Two root-side safeguards cover that case and any other
+stop, such as a manual restart or a reboot:
+
+- **Stop during a rollout.** The unit keeps `KillMode=control-group` and sets
+  `TimeoutStopSec=90s`. On `SIGTERM`, `deploy-app.sh` exits if it has not
+  started the swap, and otherwise restores the previous image through its
+  existing rollback path before exiting. systemd waits for that before it
+  starts the manager again. `KillMode=process` or `none` would instead leave
+  an orphaned root rollout that outlives its receipt, writes into a closed
+  pipe, and can overlap the next manager's release lane.
+- **Recovery after a hard stop.** Before stopping production, `deploy-app.sh`
+  records the previous image in a root-only file,
+  `/var/lib/deploy-manager-rollout/<app-id>.cutover`, and removes it once the
+  new container is verified or the old one is restored. If a rollout is killed
+  outright (a stop timeout, host crash, or power loss), the record remains. On
+  start, the manager runs `deploy-app-run --recover <app-id>` for each job that
+  was interrupted after it had started; the next release of that app runs the
+  same repair first. Recovery keeps production if it is running and healthy,
+  and otherwise starts the recorded previous image. The caller supplies only
+  the app ID; the root-owned record selects the image, and without a record
+  nothing is touched.
+
+Recovery holds the release lane, so the updater waits for it too. Its outcome
+is appended to the interrupted receipt, which stays `interrupted` because the
+requested SHA was not released:
+
+| Receipt phase | Meaning |
+| --- | --- |
+| `recovery-not-needed` | no unfinished swap; production was not left mid-cutover |
+| `production-healthy` | the swap had finished and production is running and healthy |
+| `production-restored` | the previous image was started and is healthy |
+| `recovery-skipped` | another rollout for the app holds its lock |
+| `recovery-failed` | the previous image could not be started or is unhealthy |
+| `recovery-unavailable` | the root wrapper has no `--recover` mode, or could not run |
+
+To release the interrupted SHA, re-run the same workflow. A signed request
+whose earlier job ended `interrupted` starts a fresh job, whose receipt names
+the old one in `retryOf`; no new commit is needed.
+
+### Installing these safeguards
+
+The lane check, the stop handler, the cutover record, `--recover`, and the
+unit settings live in the root plane: `update-deploy-manager`,
+`deploy-app-run`, `deploy-app.sh`, and the systemd units. The timer never
+installs those files, so a VPS whose updater was bootstrapped before this
+change keeps restarting the manager without checking the lane until an
+operator re-runs the bootstrap (see
+[Updating the privileged plane](#updating-the-privileged-plane)). Until then a
+new manager release records `recovery-unavailable` for interrupted rollouts.
+
+The bootstrap applies the same lane check before it changes anything, in both
+`--check` and apply modes, and fails with `release_lane_not_idle` while a
+release is in flight. If the updater skips activation because a release
+arrived after that check, the bootstrap logs `activation_deferred` and the
+timer activates the SHA once the lane is idle; on a first migration, which has
+no earlier release to keep running, it restores the backup instead.
+
 ## GitHub prerequisite
 
 Before running the bootstrap:
@@ -113,6 +207,12 @@ The expected final line is:
 BOOTSTRAP_OK sha=<40-character-sha> backup=/root/deploy-manager-bootstrap-backups/<timestamp> active=/opt/deploy-manager-current
 ```
 
+Run it while the release lane is idle; both commands stop with
+`release_lane_not_idle` otherwise. An `activation_deferred` line before
+`BOOTSTRAP_OK` means the root plane was promoted but a release arrived before
+the manager could be restarted; the timer activates the SHA once the lane is
+idle.
+
 The bootstrap preserves these site-specific paths:
 
 ```text
@@ -153,12 +253,21 @@ receipt available in the manager's selection details.
 ### Promotion timer
 
 The timer checks after boot and then approximately every 15 minutes with a small
-random delay. A manual check is safe and idempotent:
+random delay. A manual check is safe and idempotent, and it skips while a
+release is in flight:
 
 ```bash
 sudo systemctl start deploy-manager-update.service
 sudo journalctl -u deploy-manager-update.service -n 100 --no-pager
 ```
+
+Check the release lane before restarting the manager by hand:
+
+```bash
+curl --fail 'http://127.0.0.1:9019/api/releases?limit=1'
+```
+
+Restart only while the response has `"lane":{"busy":false,…}`.
 
 Inspect the active release and service:
 
@@ -180,7 +289,9 @@ rollback target.
 
 Changes under `install/`, the privileged wrappers, `bin/deploy-app.sh`, sudoers,
 or systemd units require another deliberate bootstrap. Use the same clean-clone
-block above. Each run creates a new root-only backup before promoting anything.
+block above, with operator authorization and while the release lane is idle.
+Each run creates a new root-only backup before promoting anything. The
+existing sudoers rule (`deploy-app-run *`) already permits `--recover`.
 
 Do not change the timer to copy those files from
 `/opt/deploy-manager-current`. That would collapse the privilege boundary this
