@@ -55,6 +55,8 @@ termination or power loss, inspect the reported backup and `receipt.json`,
 restore the two previous JSON files with the recorded ownership/modes, remove
 the newly created app env if rolling back, and remove a stale registration lock
 only after confirming no registration process is running. Backups are retained.
+When `/etc/deploy-manager` is kept in git, commit after each registration; its
+history then replaces these per-registration copies for later rollbacks.
 
 ## Activate and verify
 
@@ -85,7 +87,8 @@ only after confirming no registration process is running. Backups are retained.
    build/version SHA. Acceptance or a registered config alone is incomplete.
 
 Keep root-owned deployment wrappers outside automatic releases as described
-in [self-update.md](self-update.md). Existing generic wrapper authorization
-usually already covers registered app IDs; inspect it instead of copying a
-new per-app sudoers recipe. For a failed release, follow the existing rollout
+in [self-update.md](self-update.md). The generic `deploy-app-run *` sudoers
+rule covers every registered app ID; do not add per-app sudoers rules, and
+register the app with the existing manager rather than starting a second
+instance for it. For a failed release, follow the existing rollout
 receipt and rollback path; configuration rollback is a separate operator action.

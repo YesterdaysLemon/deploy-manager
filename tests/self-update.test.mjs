@@ -290,7 +290,11 @@ test("bootstrap preserves site config and backs up promoted files first", () => 
 
   assert.doesNotMatch(bootstrap, /install[^\n]+deploy-manager\.env/);
   assert.doesNotMatch(bootstrap, /install[^\n]+apps\.json/);
-  assert.match(bootstrap, /legacy_install_untouched=\/opt\/deploy-manager/);
+  assert.doesNotMatch(
+    bootstrap,
+    /^(?!\s*#).*\b(rm|install|cp|mv|tar)\b[^\n]*\/opt\/deploy-manager(?![-\w])/m,
+    "the bootstrap must not modify a flat install it replaces",
+  );
 
   const backup = bootstrap.indexOf('cp -a "$managed_path"');
   const failureTrap = bootstrap.indexOf("trap restore_on_failure EXIT");

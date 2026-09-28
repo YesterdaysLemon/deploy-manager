@@ -1,9 +1,10 @@
 # Rollback-safe self-update
 
 Deploy Manager can follow its own green `main` branch without letting ordinary
-application code replace root-owned deployment controls. A one-time bootstrap
-migrates the webhook service from the legacy flat install to immutable,
-SHA-named releases selected through an atomic symlink.
+application code replace root-owned deployment controls. The service runs from
+immutable, SHA-named releases selected through an atomic symlink. A manual
+bootstrap installs the root-owned plane and switches a host to that layout;
+re-running it is also how that plane is updated.
 
 This is a service-code update mechanism, not a root control-plane update
 mechanism.
@@ -160,19 +161,14 @@ arrived after that check, the bootstrap logs `activation_deferred` and the
 timer activates the SHA once the lane is idle; on a first migration, which has
 no earlier release to keep running, it restores the backup instead.
 
-## GitHub prerequisite
+## Repository requirements
 
-Before running the bootstrap:
+The repository's default branch is `main`, and the `check.yml` push workflow
+for the current `main` SHA is green; the updater verifies both. Protecting
+`main` and requiring the `check` job before merging is an owner policy to set
+before trusting unattended updates.
 
-1. merge the self-update pull request to `main`;
-2. change the repository default branch from `master` to `main`;
-3. protect `main` and require the `check` job before merging;
-4. confirm the latest `main` push workflow is green.
-
-The updater verifies the second and fourth conditions itself. Branch protection
-is an owner policy and should be configured before trusting unattended updates.
-
-## One-time VPS bootstrap
+## VPS bootstrap
 
 Run this from an interactive shell on the VPS. It clones a clean current `main`,
 runs a non-mutating preflight, then asks for sudo only for the bootstrap. The
@@ -222,11 +218,12 @@ The bootstrap preserves these site-specific paths:
 /opt/deploy-manager
 ```
 
-The old flat `/opt/deploy-manager` install remains available as the migration
-fallback. Before changing promoted files, the bootstrap stores their exact
-prior state under the reported root-only backup directory. If initial release
-activation or timer setup fails, it restores the old systemd unit and promoted
-files and restarts the prior service.
+Before changing promoted files, the bootstrap stores their exact prior state
+under the reported root-only backup directory. If release activation or timer
+setup fails, it restores the old systemd unit and promoted files and restarts
+the prior service. On a host still running the flat install from
+`install-on-vps.sh`, the bootstrap leaves that directory alone; remove it once
+the versioned service is healthy.
 
 ## Normal operation
 

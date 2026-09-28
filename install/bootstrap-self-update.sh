@@ -1,10 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
-# One-time migration from the legacy flat /opt/deploy-manager install to the
-# versioned, rollback-safe self-update layout. This script is intentionally
-# manual: it promotes the privileged control plane that automatic updates are
-# never allowed to replace.
+# Installs or updates the privileged control plane (wrappers, rollout script,
+# updater, sudoers, systemd units) and activates a versioned release. It is
+# intentionally manual: automatic updates are never allowed to replace these
+# files. A host still running the flat install is switched to versioned
+# releases; the flat directory itself is left for the operator to remove.
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export PATH
@@ -286,5 +287,5 @@ if ! systemctl is-active --quiet "$SERVICE" ||
 fi
 
 bootstrap_complete="1"
-log "success sha=$source_sha backup=$backup_dir active_link=$ACTIVE_LINK legacy_install_untouched=/opt/deploy-manager"
+log "success sha=$source_sha backup=$backup_dir active_link=$ACTIVE_LINK"
 echo "BOOTSTRAP_OK sha=$source_sha backup=$backup_dir active=$ACTIVE_LINK"

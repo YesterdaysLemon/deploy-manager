@@ -102,7 +102,7 @@ authorizes the exact action:
 - starting, stopping, replacing, or deleting production containers;
 - restarting the manager, which also requires `/api/releases` to report
   `lane.busy: false`;
-- running the one-time self-update bootstrap.
+- running the self-update bootstrap.
 
 The normal rollout intentionally stops and removes the old production container
 before binding the new one to the same loopback port. Treat this as a small

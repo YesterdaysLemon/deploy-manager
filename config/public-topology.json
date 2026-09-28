@@ -71,9 +71,8 @@
       "port": 3040,
       "plot": { "x": 1.5, "z": -0.5 },
       "kind": "bridge",
-      "description": "A release and continuity bridge with its own dedicated webhook inlet.",
-      "healthPath": "/healthz",
-      "managedBy": "continuity-deploy-manager"
+      "description": "A release and continuity bridge.",
+      "healthPath": "/healthz"
     },
     {
       "id": "conspiracy",
@@ -129,12 +128,6 @@
       "name": "Docker engine",
       "status": "online",
       "description": "Runs the current and candidate containers on isolated local ports."
-    },
-    {
-      "id": "continuity-deploy-manager",
-      "name": "Continuity inlet",
-      "status": "online",
-      "description": "A separate deploy webhook dedicated to Codex Continuity."
     }
   ]
 }

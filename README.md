@@ -164,20 +164,9 @@ deploy.example.com {
 }
 ```
 
-If one exact deployment path has a dedicated inlet, match it before the
-shared-manager fallback and preserve the original request path:
-
-```caddyfile
-deploy.example.com {
-  handle /deploy/special-app {
-    reverse_proxy 127.0.0.1:9020
-  }
-
-  handle {
-    reverse_proxy 127.0.0.1:9000
-  }
-}
-```
+Run one manager per host and register every app with it. A second instance
+would keep its own release lane, share the default release journal, and never
+be restarted by the self-updater, so it would drift onto old code.
 
 The public map comes from `config/public-topology.json` by default. An
 operator-maintained file can be selected with
@@ -243,7 +232,8 @@ archive checksums live in
 - `install/install-on-vps.sh`: simple installer for a fresh VPS setup.
 - `install/systemd/deploy-manager.service`: systemd unit example.
 - `install/sudoers/deploy-manager`: narrow sudoers example.
-- `install/bootstrap-self-update.sh`: one-time migration to versioned releases.
+- `install/bootstrap-self-update.sh`: installs or updates the root-owned plane
+  and activates a versioned release.
 - `install/update-deploy-manager`: root-owned exact-SHA release updater.
 - `install/systemd/deploy-manager-managed.service`: service using the atomic
   active-release link.
@@ -283,12 +273,16 @@ The installer creates:
 
 Edit `/etc/deploy-manager/apps.json`, `/etc/deploy-manager/apps/*.env`, and
 `/etc/deploy-manager/deploy-manager.env` for the real domains, repos, ports,
-branches, and webhook secrets.
+branches, and webhook secrets. Keep `/etc/deploy-manager` in a local,
+root-only git repository, as with `/etc/caddy`, and commit each change instead
+of making backup copies; a stale whole-file copy restored later silently drops
+every app added since.
 
-For an existing production installation, do not overlay this repository onto
-the live directory merely to enable self-update. Follow the migration in
-[`docs/self-update.md`](docs/self-update.md); it preserves the site-specific
-configuration and legacy flat install while creating a root-only backup.
+To switch an installed manager to versioned, self-updating releases, or to
+update its root-owned wrappers and units later, run the bootstrap in
+[`docs/self-update.md`](docs/self-update.md) rather than overlaying this
+repository onto the live directory. It keeps the site-specific configuration
+and backs up every file it replaces.
 
 ## App Config
 
