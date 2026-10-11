@@ -19,9 +19,17 @@ set +a
 
 MODE="deploy"
 REQUESTED_SHA=""
+RESTORE_EXPECT_IMAGE=""
 
 if [ "${1:-}" = "--recover" ]; then
   MODE="recover"
+elif [ "${1:-}" = "--restore" ] || [ "${1:-}" = "--rebind" ]; then
+  # Operator-only direct invocation. deploy-app-run intentionally accepts no
+  # restore request from the webhook service.
+  [ "$(id -u)" -eq 0 ] || exit 64
+  MODE="${1#--}"
+  REQUESTED_SHA="${2:?snapshot ID is required}"
+  RESTORE_EXPECT_IMAGE="${3:?reviewed current image is required}"
 else
   REQUESTED_SHA="${1:-${DEPLOY_SHA:-}}"
 
@@ -67,6 +75,13 @@ NEW_IMAGE="${IMAGE_NAME}:${REQUESTED_SHA}"
 HEALTH_URL="http://127.0.0.1:${APP_PORT}${HEALTH_PATH}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
+if [ -n "${STATEFUL_RUNTIME_FILE:-}" ]; then
+  # First-use lock creation must not follow a precreated symlink in /run/lock.
+  # The root helper validates/creates this private directory and regular file
+  # before the shell opens it; its trusted parent prevents replacement races.
+  LOCK_FILE="/var/lib/deploy-manager-locks/${APP_ID}.lock"
+  node "$(dirname "$0")/stateful-service.mjs" --prepare-lock "$LOCK_FILE"
+fi
 mkdir -p "$(dirname "$LOCK_FILE")"
 
 log() {
@@ -303,6 +318,20 @@ stop_requested() {
 }
 trap stop_requested HUP INT TERM
 
+stateful_runtime() {
+  export LOG_FILE LOCK_FILE ROLLOUT_STATE_DIR HEALTH_PATH HEALTH_ATTEMPTS
+  # exec retains fd 9 and its existing per-app flock. The helper handles stop
+  # signals and leaves durable records for hard-stop recovery.
+  exec node "$(dirname "$0")/stateful-service.mjs" "$1" "$2" "$3"
+}
+
+if [ -n "${STATEFUL_RUNTIME_FILE:-}" ] && [ "$MODE" != "deploy" ]; then
+  stateful_runtime "$MODE" "$REQUESTED_SHA" "$RESTORE_EXPECT_IMAGE"
+fi
+if [ "$MODE" = "restore" ] || [ "$MODE" = "rebind" ]; then
+  fail "operator_mode_requires_stateful_runtime"
+fi
+
 if [ "$MODE" = "recover" ]; then
   if repair_interrupted_cutover; then
     log "release_recovery=$RECOVERY_OUTCOME"
@@ -318,7 +347,7 @@ log "deploy_start branch=$BRANCH requested_sha=$REQUESTED_SHA started_at=$STARTE
 # container is the rollback target below. A restore that fails is logged and
 # this rollout continues with its own candidate check and rollback; an
 # untrusted or malformed cutover record stops it.
-if ! repair_interrupted_cutover; then
+if [ -z "${STATEFUL_RUNTIME_FILE:-}" ] && ! repair_interrupted_cutover; then
   log "interrupted_cutover_unresolved continuing_with_release"
 fi
 
@@ -337,6 +366,10 @@ fi
 
 emit_phase build
 build_image || fail "docker_build_failed sha=$CURRENT_SHA"
+
+if [ -n "${STATEFUL_RUNTIME_FILE:-}" ]; then
+  stateful_runtime deploy "$CURRENT_SHA" ""
+fi
 
 OLD_CONTAINER_ID="$(docker ps -aq -f "name=^/${CONTAINER_NAME}$" || true)"
 OLD_IMAGE=""

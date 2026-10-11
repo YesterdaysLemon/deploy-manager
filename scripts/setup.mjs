@@ -4,6 +4,7 @@ import path from "node:path";
 import process from "node:process";
 import readline from "node:readline/promises";
 import { fileURLToPath } from "node:url";
+import { normalizeRuntime } from "../bin/stateful-service.mjs";
 import {
   CONTROL_PLOT_ADDRESSES,
   normalizePlotAddress,
@@ -144,6 +145,7 @@ function normalizeApp(app, index) {
       ? app.datastores.map((idValue, datastoreIndex) => patternString(idValue, `${label}.datastores[${datastoreIndex}]`, APP_ID))
       : [],
     plot: optionalPlot(app?.plot, `${label}.plot`),
+    ...(app?.runtime !== undefined ? { runtime: normalizeRuntime(app.runtime, `${label}.runtime`) } : {}),
   };
 
   if (result.publicPort === result.candidatePort) fail(`${label}.candidatePort must differ from publicPort`);
@@ -165,6 +167,7 @@ export function normalizeFleetSpec(input) {
   const secretNames = new Set();
   const containerNames = new Set();
   const repoDirectories = new Set();
+  const persistentMounts = [];
   const plotKeys = new Set(CONTROL_PLOT_ADDRESSES.map(({ x, z }) => `${x}:${z}`));
   for (const store of datastores) {
     if (datastoreIds.has(store.id)) fail(`duplicate datastore id: ${store.id}`);
@@ -185,12 +188,19 @@ export function normalizeFleetSpec(input) {
       if (containerNames.has(name)) fail(`duplicate container name: ${name}`);
       containerNames.add(name);
     }
-    for (const [role, port] of [["public", app.publicPort], ["candidate", app.candidatePort]]) {
+    for (const [role, port] of [["public", app.publicPort], ["candidate", app.candidatePort], ...(app.runtime?.ports.map(binding => ["service", binding.hostPort]) ?? [])]) {
       if (ports.has(port)) fail(`port ${port} is shared by ${ports.get(port)} and ${app.id} ${role}`);
       ports.set(port, `${app.id} ${role}`);
     }
     for (const datastoreId of app.datastores) {
       if (!datastoreIds.has(datastoreId)) fail(`${app.id} references unknown datastore ${datastoreId}`);
+    }
+    for (const mount of app.runtime?.mounts ?? []) {
+      for (const previous of persistentMounts) {
+        if (previous.type !== mount.type || (previous.readOnly && mount.readOnly)) continue;
+        if (previous.source === mount.source || (mount.type === "bind" && (previous.source.startsWith(`${mount.source}/`) || mount.source.startsWith(`${previous.source}/`)))) fail(`persistent storage is shared by ${previous.appId} and ${app.id}`);
+      }
+      persistentMounts.push({ ...mount, appId: app.id });
     }
   }
 
@@ -278,6 +288,7 @@ function appEnv(app) {
   ];
   if (app.runtimeEnvFile) values.push(["CONTAINER_ENV_FILE", app.runtimeEnvFile]);
   if (app.dockerNetwork) values.push(["DOCKER_NETWORK", app.dockerNetwork]);
+  if (app.runtime) values.push(["STATEFUL_RUNTIME_FILE", `/etc/deploy-manager/runtime/${app.id}.json`]);
   return `${values.map(([key, value]) => `${key}=${shellQuote(value)}`).join("\n")}\n`;
 }
 
@@ -347,15 +358,15 @@ import sites/*.caddy
 `;
 
 // One site's file, installed as /etc/caddy/sites/<hostname>.caddy.
-export function caddySite(hostname, port, label) {
-  return `# ${label}\n${hostname} {\n\treverse_proxy 127.0.0.1:${port}\n}\n`;
+export function caddySite(hostname, port, label, exposeHttp = true) {
+  return `# ${label}\n${hostname} {\n\t${exposeHttp ? `reverse_proxy 127.0.0.1:${port}` : "respond 404"}\n}\n`;
 }
 
 export const caddySitePath = (hostname) => `sites/${hostname}.caddy`;
 
 function caddyFiles(spec) {
   const files = [["caddy/Caddyfile", CADDY_MAIN]];
-  for (const app of spec.apps) files.push([`caddy/${caddySitePath(app.hostname)}`, caddySite(app.hostname, app.publicPort, `${app.name} (${app.id})`)]);
+  for (const app of spec.apps) files.push([`caddy/${caddySitePath(app.hostname)}`, caddySite(app.hostname, app.publicPort, `${app.name} (${app.id})`, app.runtime?.exposeHttp ?? true)]);
   files.push([`caddy/${caddySitePath(spec.manager.hostname)}`, caddySite(spec.manager.hostname, spec.manager.port, "Deploy Manager webhook")]);
   return files;
 }
@@ -403,6 +414,7 @@ export function generateBundle(input, generatedAt = new Date().toISOString()) {
   ]);
   for (const app of spec.apps) {
     files.set(`apps/${app.id}.env`, appEnv(app));
+    if (app.runtime) files.set(`runtime/${app.id}.json`, `${JSON.stringify(app.runtime, null, 2)}\n`);
     files.set(`github/${app.id}-deploy.yml`, workflow(app));
   }
   return { spec, files };

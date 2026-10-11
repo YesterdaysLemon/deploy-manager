@@ -78,6 +78,12 @@ Both commands stop at a local staging bundle. They do not use sudo, write to
 [`docs/manual-setup.md`](docs/manual-setup.md) for the human path and
 [`docs/agent-quickstart.md`](docs/agent-quickstart.md) for the agent boundary.
 
+For a mail server or another app with embedded persistent data, use the optional
+[stateful runtime](docs/stateful-services.md). It declares bind mounts or Docker
+volumes and additional TCP ports, stops the sole writer for a verified encrypted
+off-host backup, and preserves data on failed updates. Restoring a compatible
+image and data is an explicit operator action.
+
 The manager itself can optionally follow an exact, green `main` SHA through a
 separate root-owned updater. Releases are versioned and activated atomically;
 the updater rolls back on failed restart or health validation, and it never
