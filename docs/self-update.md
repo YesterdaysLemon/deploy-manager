@@ -29,6 +29,9 @@ from an automatically activated release:
 /usr/local/sbin/deploy-app-run
 /usr/local/bin/deploy-manager-sudo
 /usr/local/libexec/deploy-manager/deploy-app.sh
+/usr/local/libexec/deploy-manager/stateful-service.mjs
+/usr/local/libexec/deploy-manager/restic-service-backup.mjs
+/usr/local/libexec/deploy-manager/cold-service-backup.mjs
 /etc/sudoers.d/deploy-manager
 /etc/systemd/system/deploy-manager.service
 /etc/systemd/system/deploy-manager-update.service
@@ -284,7 +287,8 @@ rollback target.
 
 ## Updating the privileged plane
 
-Changes under `install/`, the privileged wrappers, `bin/deploy-app.sh`, sudoers,
+Changes under `install/`, the privileged wrappers, `bin/deploy-app.sh`, the
+stateful/restic/cold-backup helpers, sudoers,
 or systemd units require another deliberate bootstrap. Use the same clean-clone
 block above, with operator authorization and while the release lane is idle.
 Each run creates a new root-only backup before promoting anything. The

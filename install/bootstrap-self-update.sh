@@ -60,6 +60,9 @@ for required_file in \
   package.json \
   src/server.mjs \
   bin/deploy-app.sh \
+  bin/stateful-service.mjs \
+  bin/restic-service-backup.mjs \
+  bin/cold-service-backup.mjs \
   bin/deploy-app-run \
   bin/deploy-manager-sudo \
   install/update-deploy-manager \
@@ -148,6 +151,9 @@ managed_paths="
 /usr/local/sbin/deploy-app-run
 /usr/local/bin/deploy-manager-sudo
 /usr/local/libexec/deploy-manager/deploy-app.sh
+/usr/local/libexec/deploy-manager/stateful-service.mjs
+/usr/local/libexec/deploy-manager/restic-service-backup.mjs
+/usr/local/libexec/deploy-manager/cold-service-backup.mjs
 /usr/local/sbin/update-deploy-manager
 /etc/sudoers.d/deploy-manager
 /etc/systemd/system/deploy-manager.service
@@ -240,6 +246,9 @@ install -d -o root -g "$build_group" -m 0750 "$STATE_DIR"
 install -d -o root -g root -m 0755 "$CONFIG_DIR"
 
 install -o root -g root -m 0755 "$STAGING_DIR/bin/deploy-app.sh" /usr/local/libexec/deploy-manager/deploy-app.sh
+install -o root -g root -m 0755 "$STAGING_DIR/bin/stateful-service.mjs" /usr/local/libexec/deploy-manager/stateful-service.mjs
+install -o root -g root -m 0755 "$STAGING_DIR/bin/restic-service-backup.mjs" /usr/local/libexec/deploy-manager/restic-service-backup.mjs
+install -o root -g root -m 0755 "$STAGING_DIR/bin/cold-service-backup.mjs" /usr/local/libexec/deploy-manager/cold-service-backup.mjs
 install -o root -g root -m 0755 "$STAGING_DIR/bin/deploy-app-run" /usr/local/sbin/deploy-app-run
 install -o root -g root -m 0755 "$STAGING_DIR/bin/deploy-manager-sudo" /usr/local/bin/deploy-manager-sudo
 install -o root -g root -m 0755 "$STAGING_DIR/install/update-deploy-manager" /usr/local/sbin/update-deploy-manager

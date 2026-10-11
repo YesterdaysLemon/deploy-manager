@@ -5,10 +5,11 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { normalizeRuntime } from "../bin/stateful-service.mjs";
 import { caddySite, caddySitePath, generateBundle, normalizeFleetSpec, writeBundle } from "./setup.mjs";
 import { CONTROL_PLOT_ADDRESSES, normalizePlotAddress, stablePlotAddresses } from "../client/plot-layout.js";
 
-const ENV_KEYS = new Set(["APP_ID", "REPO_DIR", "REPO_USER", "APP_PORT", "CANDIDATE_APP_PORT", "CONTAINER_NAME", "CANDIDATE_CONTAINER_NAME", "IMAGE_NAME", "DEPLOY_MANAGER_PORT"]);
+const ENV_KEYS = new Set(["APP_ID", "REPO_DIR", "REPO_USER", "APP_PORT", "CANDIDATE_APP_PORT", "CONTAINER_NAME", "CANDIDATE_CONTAINER_NAME", "IMAGE_NAME", "DEPLOY_MANAGER_PORT", "STATEFUL_RUNTIME_FILE"]);
 const json = value => `${JSON.stringify(value, null, 2)}\n`;
 const hash = value => createHash("sha256").update(value).digest("hex");
 const reject = message => { throw new Error(message); };
@@ -57,6 +58,32 @@ export function snapshotConfig(configDirectory) {
     contents[name] = buffer.toString("utf8");
     fingerprints[name] = { sha256: hash(buffer), mode: stat.mode & 0o777, uid: stat.uid, gid: stat.gid };
   }
+  for (const name of names.filter(name => name.startsWith("apps/"))) {
+    const settings = readSettings(contents[name], name);
+    if (!settings.STATEFUL_RUNTIME_FILE) continue;
+    const id = path.basename(name, ".env");
+    if (settings.STATEFUL_RUNTIME_FILE !== `/etc/deploy-manager/runtime/${id}.json`) reject(`${name}: runtime path must be the app's fixed root configuration file`);
+    directory(path.join(root, "runtime"));
+    const relative = `runtime/${id}.json`;
+    const stat = regularFile(path.join(root, relative));
+    const buffer = fs.readFileSync(path.join(root, relative));
+    normalizeRuntime(JSON.parse(buffer.toString("utf8")));
+    contents[relative] = buffer.toString("utf8");
+    fingerprints[relative] = { sha256: hash(buffer), mode: stat.mode & 0o777, uid: stat.uid, gid: stat.gid };
+  }
+  if (fs.existsSync(path.join(root, "runtime"))) {
+    directory(path.join(root, "runtime"));
+    for (const name of fs.readdirSync(path.join(root, "runtime"))) {
+      if (!/^[a-z0-9][a-z0-9_-]{0,63}\.json$/.test(name)) reject("unsafe existing runtime filename");
+      const relative = `runtime/${name}`;
+      if (Object.hasOwn(contents, relative)) continue;
+      const stat = regularFile(path.join(root, relative));
+      const buffer = fs.readFileSync(path.join(root, relative));
+      normalizeRuntime(JSON.parse(buffer.toString("utf8")));
+      contents[relative] = buffer.toString("utf8");
+      fingerprints[relative] = { sha256: hash(buffer), mode: stat.mode & 0o777, uid: stat.uid, gid: stat.gid };
+    }
+  }
   return { root, contents, fingerprints };
 }
 
@@ -87,6 +114,7 @@ export function planRegistration(input, snapshot) {
   const control = topology.controlPlane ?? [];
   if (Object.hasOwn(allowlist.apps, app.id) || [...entities, ...control].some(entity => entity.id === app.id || entity.appId === app.id)) reject(`app id already exists: ${app.id}`);
   if (Object.hasOwn(snapshot.contents, `apps/${app.id}.env`)) reject(`app env already exists: ${app.id}`);
+  if (Object.hasOwn(snapshot.contents, `runtime/${app.id}.json`)) reject(`app runtime already exists: ${app.id}`);
   for (const [id, existing] of Object.entries(allowlist.apps)) {
     if (Object.hasOwn(existing, "secret")) reject("move inline webhook secrets to secretEnv before generating a review bundle");
     if (!Object.hasOwn(snapshot.contents, `apps/${id}.env`)) reject(`missing existing app env: ${id}`);
@@ -122,7 +150,15 @@ export function planRegistration(input, snapshot) {
     containerNames.add(env.CANDIDATE_CONTAINER_NAME || `${env.CONTAINER_NAME}-candidate`);
     imageNames.add(env.IMAGE_NAME);
   }
-  if ([app.publicPort, app.candidatePort].some(port => ports.has(port))) reject("production or candidate port is already reserved");
+  for (const [name, text] of Object.entries(snapshot.contents).filter(([name]) => name.startsWith("runtime/"))) {
+    const runtime = normalizeRuntime(JSON.parse(text));
+    for (const binding of runtime.ports) ports.add(binding.hostPort);
+    for (const old of runtime.mounts) for (const fresh of app.runtime?.mounts ?? []) {
+      if (old.type !== fresh.type || (old.readOnly && fresh.readOnly)) continue;
+      if (old.source === fresh.source || (old.type === "bind" && (old.source.startsWith(`${fresh.source}/`) || fresh.source.startsWith(`${old.source}/`)))) reject(`persistent storage overlaps ${name}`);
+    }
+  }
+  if ([app.publicPort, app.candidatePort, ...(app.runtime?.ports.map(binding => binding.hostPort) ?? [])].some(port => ports.has(port))) reject("production, candidate or service port is already reserved");
   if ([app.containerName, app.candidateContainerName].some(name => containerNames.has(name))) reject("container name is already registered");
   if (imageNames.has(app.imageName)) reject("image name is already registered");
 
@@ -155,12 +191,13 @@ export function planRegistration(input, snapshot) {
   topology.routes.push(JSON.parse(bundle.files.get("public-topology.json")).routes[0]);
   const files = {
     [`apps/${app.id}.env`]: bundle.files.get(`apps/${app.id}.env`),
+    ...(app.runtime ? { [`runtime/${app.id}.json`]: bundle.files.get(`runtime/${app.id}.json`) } : {}),
     "public-topology.json": json(topology),
     "apps.json": json(allowlist),
   };
   return { version: 1, root: snapshot.root, input: spec, before: snapshot.fingerprints, files, pinned,
     workflow: bundle.files.get(`github/${app.id}-deploy.yml`),
-    caddy: caddySite(app.hostname, app.publicPort, `${app.name} (${app.id})`),
+    caddy: caddySite(app.hostname, app.publicPort, `${app.name} (${app.id})`, app.runtime?.exposeHttp ?? true),
     app };
 }
 
@@ -170,7 +207,7 @@ export function validateHost(app, host) {
   if (!Number.isInteger(host.ownerUid) || host.ownerUid <= 0) reject("repoUser must exist and be unprivileged");
   if (host.repoUid !== host.ownerUid || host.repoRealpath !== app.repoDir) reject("checkout owner or real path does not match the spec");
   if (repositoryIdentity(host.repository) !== repositoryIdentity(app.repository)) reject("checkout origin does not match repository");
-  if ([app.publicPort, app.candidatePort].some(port => host.listeningPorts.includes(port))) reject("production or candidate port is already listening");
+  if ([app.publicPort, app.candidatePort, ...(app.runtime?.ports.map(binding => binding.hostPort) ?? [])].some(port => host.listeningPorts.includes(port) || (host.publishedPorts ?? []).includes(port))) reject("production, candidate or service port is already listening or Docker-published");
   if ([app.containerName, app.candidateContainerName].some(name => host.containers.includes(name))) reject("production or candidate container already exists");
 }
 
@@ -184,7 +221,13 @@ function inspectHost(app) {
     ? run("runuser", ["-u", app.repoUser, "--", "git", ...gitArgs]) : run("git", gitArgs);
   const listeningPorts = run("ss", ["-H", "-ltn"]).split("\n").map(line => Number(line.trim().split(/\s+/)[3]?.match(/:(\d+)$/)?.[1]));
   const containers = run("docker", ["ps", "-a", "--format", "{{.Names}}"] ).split("\n");
-  const host = { ownerUid, repoUid: repoStat.uid, repoRealpath: fs.realpathSync(app.repoDir), repository, listeningPorts, containers };
+  const publishedPorts = [];
+  for (const name of containers.filter(Boolean)) {
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(name)) reject("unexpected Docker container name");
+    const bindings = JSON.parse(run("docker", ["inspect", "--format", "{{json .HostConfig.PortBindings}}", name]));
+    for (const [key, values] of Object.entries(bindings ?? {})) if (key.endsWith("/tcp")) for (const binding of values ?? []) publishedPorts.push(Number(binding.HostPort));
+  }
+  const host = { ownerUid, repoUid: repoStat.uid, repoRealpath: fs.realpathSync(app.repoDir), repository, listeningPorts, publishedPorts, containers };
   validateHost(app, host);
   return host;
 }
@@ -229,6 +272,11 @@ export function applyRegistration(plan, expectedDigest, { write = atomicWrite } 
     fs.writeFileSync(path.join(backup, "receipt.json"), json({ digest: expectedDigest, before: plan.before, created: Object.keys(plan.files).filter(name => !Object.hasOwn(snapshot.contents, name)) }), { mode: 0o600, flag: "wx" });
     for (const [name, contents] of Object.entries(plan.files)) {
       const metadata = snapshot.fingerprints[name] ?? { ...snapshot.fingerprints["apps.json"], mode: 0o600 };
+      if (name.startsWith("runtime/")) {
+        const runtimeDirectory = path.join(plan.root, "runtime");
+        if (!fs.existsSync(runtimeDirectory)) fs.mkdirSync(runtimeDirectory, { mode: 0o700 });
+        directory(runtimeDirectory);
+      }
       write(path.join(plan.root, name), contents, metadata);
       written.push(name);
     }
