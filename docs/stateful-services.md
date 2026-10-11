@@ -170,7 +170,9 @@ the authorized SSH user mode 0700. That user may then establish an SSH reverse
 Unix socket, with `StreamLocalBindMask=0177`, to the operator's loopback
 rest-server. The exact socket must be owned by the pinned UID, with no group
 or other permissions. All ancestors above the user-owned app directory must
-be protected root directories. TCP URLs, arbitrary Unix sockets, embedded
+be protected root directories. A three-second HEAD probe of the existing
+encrypted repository fails before restic's longer retries or a writer stop.
+TCP URLs, arbitrary Unix sockets, embedded
 credentials and local fixture repositories cannot claim this transport.
 
 Keep rest-server loopback-only, append-only, and confined to the persistent

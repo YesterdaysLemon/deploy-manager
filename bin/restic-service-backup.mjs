@@ -3,6 +3,7 @@
 // service start, image pruning or repo scripts. Local fixture receipts are never offHost.
 import fs from "node:fs";
 import path from "node:path";
+import http from "node:http";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { pipeline } from "node:stream/promises";
@@ -94,6 +95,22 @@ export function validateTomeTransport(policy, lstat = fs.lstatSync) {
   const directory = `/var/lib/deploy-manager-tome/${policy.appId}`, owner = policy.socketOwnerUid;
   const parent = lstat(directory), socket = lstat(`${directory}/rest.sock`);
   if (!parent.isDirectory() || parent.isSymbolicLink() || parent.uid !== owner || (parent.mode & 0o077) || !socket.isSocket() || socket.isSymbolicLink() || socket.uid !== owner || (socket.mode & 0o077)) fail("Tome tunnel unavailable or untrusted; no offhost backup can be claimed");
+}
+export function probeTomeTransport(policy, request = http.request) {
+  if (policy.transport !== "tome-ssh-unix") return Promise.resolve();
+  // Restic can retry an offline repository for minutes. Bound this harmless
+  // availability check before the writer is stopped or any backup is claimed.
+  return new Promise((resolve, reject) => {
+    const failed = () => reject(Error("Tome encrypted repository unavailable"));
+    const probe = request({socketPath:`/var/lib/deploy-manager-tome/${policy.appId}/rest.sock`,
+      path:`/${policy.appId}/config`,method:"HEAD",timeout:3000}, response => {
+      response.destroy();
+      if (response.statusCode === 200) resolve(); else failed();
+    });
+    probe.once("error",failed);
+    probe.once("timeout",()=>{probe.destroy();failed();});
+    probe.end();
+  });
 }
 
 // Digest content plus POSIX ownership/modes. Refuse links/devices/FIFOs rather
@@ -242,6 +259,7 @@ async function main(args) {
   const policyFile = protectedPath(`/etc/deploy-manager/backup/${appId}.json`);
   const policy = normalizeBackupPolicy(JSON.parse(fs.readFileSync(policyFile, "utf8")), appId);
   validateTomeTransport(policy);
+  await probeTomeTransport(policy);
   const runtime = normalizeRuntime(JSON.parse(fs.readFileSync(protectedPath(runtimeFile), "utf8")));
   protectedPath(policy.resticPath); protectedPath(policy.passwordFile);
   if (fs.statSync(policy.passwordFile).mode & 0o077) fail("backup password file must be private to root");

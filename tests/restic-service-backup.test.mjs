@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import {EventEmitter} from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { normalizeBackupPolicy, validateTomeTransport, validateStoragePaths, treeDigest, snapshotService, restoreService } from "../bin/restic-service-backup.mjs";
+import { normalizeBackupPolicy, validateTomeTransport, probeTomeTransport, validateStoragePaths, treeDigest, snapshotService, restoreService } from "../bin/restic-service-backup.mjs";
 import { fingerprint, validateBackupReceipt } from "../bin/stateful-service.mjs";
 
 const policy = { version: 1, appId: "mail", repository: `s3:https://${"a".repeat(32)}.r2.cloudflarestorage.com/mail-backups`, passwordFile: "/etc/deploy-manager/backup/mail.password", credentialsFile: "/etc/deploy-manager/backup/mail.s3.json", resticPath: "/usr/local/bin/restic" };
@@ -33,6 +34,21 @@ test("missing, symlinked, writable or wrong-owner Tome sockets fail closed",()=>
   for(const patch of [{uid:0},{mode:0o666},{isSocket:()=>false},{isSymbolicLink:()=>true}])assert.throws(()=>validateTomeTransport(value,target=>target.endsWith("rest.sock")?{...mock(target),...patch}:mock(target)));
   assert.throws(()=>validateTomeTransport(value,()=>{throw Error("offline");}));
   assert.throws(()=>validateTomeTransport(value,target=>target==="/var/lib/deploy-manager-tome"?{...mock(target),mode:0o777}:mock(target)));
+});
+test("Tome availability probe uses only its Unix repository and accepts an existing encrypted config",async()=>{
+  let destroyed=false;
+  await probeTomeTransport({transport:"tome-ssh-unix",appId:"mail"},(options,reply)=>{
+    assert.deepEqual(options,{socketPath:"/var/lib/deploy-manager-tome/mail/rest.sock",path:"/mail/config",method:"HEAD",timeout:3000});
+    const request=new EventEmitter();request.end=()=>reply({statusCode:200,destroy:()=>{destroyed=true;}});return request;
+  });
+  assert.equal(destroyed,true);
+});
+test("offline, refused, timed-out or uninitialized Tome repositories fail the availability probe",async()=>{
+  for(const reason of ["error","timeout",404,503])await assert.rejects(probeTomeTransport({transport:"tome-ssh-unix",appId:"mail"},(_,reply)=>{
+    const request=new EventEmitter();request.destroy=()=>{};
+    request.end=()=>typeof reason==="number"?reply({statusCode:reason,destroy:()=>{}}):request.emit(reason,Error("fixture failure"));return request;
+  }),/unavailable/);
+  await probeTomeTransport({transport:"other"},()=>{throw Error("must not probe another transport");});
 });
 test("content digest changes for bytes and refuses linked writable data", () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "dm-restic-digest-"));
