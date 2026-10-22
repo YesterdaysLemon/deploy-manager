@@ -440,6 +440,13 @@ or container logs. Cap both in `/etc/docker/daemon.json`:
 every app with it. The settings apply when Docker restarts. Cap the systemd
 journal as well (`SystemMaxUse=500M` in `/etc/systemd/journald.conf.d/`).
 
+Builds run with `--pull`, so each release picks up the current image behind a
+floating base tag such as `node:22-alpine`. To get a patched runtime into an app
+without a new commit, rebuild the running SHA as root:
+`deploy-app-run <app-id> <running-sha>`. The manager deduplicates a repeated
+SHA, so this has to go through the wrapper. That rollout rolls back to the
+running image by ID and leaves the previous release's image in place.
+
 ## Manual Checks
 
 Check the manager:

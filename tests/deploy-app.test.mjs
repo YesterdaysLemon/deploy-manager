@@ -12,6 +12,7 @@ const DEPLOY_APP_RUN = path.join(ROOT, "bin", "deploy-app-run");
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const NEW_IMAGE = `test-image:${SHA}`;
 const OLD_IMAGE = "test-image:known-good";
+const OLD_IMAGE_ID = "sha256:5f1d0c0ffee0000000000000000000000000000000000000000000000000000";
 const PRODUCTION_RUN = "run -d --name test-app --restart unless-stopped -p 127.0.0.1:3100:8080";
 
 function findShell() {
@@ -76,8 +77,9 @@ case "$command" in
   inspect)
     case " $* " in
       *"State.Running"*) printf '%s\\n' "\${PRODUCTION_RUNNING:-false}"; return 0 ;;
+      *"{{.Image}}"*) printf '%s\\n' "$OLD_IMAGE_ID"; return 0 ;;
     esac
-    printf '%s\\n' test-image:known-good
+    printf '%s\\n' "\${PRODUCTION_IMAGE:-test-image:known-good}"
     return 0
     ;;
   rm) return 0 ;;
@@ -161,6 +163,7 @@ function runRollout({ args = "", cutoverRecord, env = {} } = {}) {
         CUTOVER_FILE_UNDER_TEST: posix(cutoverFile),
         HARNESS_ARGS: args,
         NEW_IMAGE,
+        OLD_IMAGE_ID,
         SHA,
         ...env,
       },
@@ -193,7 +196,7 @@ test("a failed production start restores and health-checks the old image", () =>
   assert.match(result.log, /reason=docker_run_failed_rolled_back/);
   assert.match(result.log, new RegExp(`sha=${SHA}`));
 
-  assert.match(result.calls, new RegExp(`build -t ${NEW_IMAGE}`));
+  assert.match(result.calls, new RegExp(`build --pull -t ${NEW_IMAGE}`));
   const failedRun = result.calls.indexOf(`${PRODUCTION_RUN} ${NEW_IMAGE}`);
   const restoredRun = result.calls.indexOf(`${PRODUCTION_RUN} ${OLD_IMAGE}`);
   assert.ok(failedRun >= 0, `new production run was not attempted:\n${result.calls}`);
@@ -211,6 +214,24 @@ test("the previous image is recorded before production stops and cleared after v
   assert.equal(result.calls.split("\n")[stop + 1], `cutover-record ${OLD_IMAGE}`, result.calls);
   assert.ok(!result.calls.slice(0, result.calls.indexOf("stop test-app")).includes("cutover-record"), result.calls);
   assert.equal(result.cutoverLeft, false, "a verified release must clear the cutover record");
+});
+
+test("rebuilding the running SHA rolls back to the running image by ID", () => {
+  const result = runRollout({ env: { PRODUCTION_IMAGE: NEW_IMAGE, FAIL_NEW_RUN: "1" } });
+
+  assert.notEqual(result.status, 0, result.detail);
+  assert.match(result.log, /reason=docker_run_failed_rolled_back/);
+  const stop = lineIndex(result.calls, "stop test-app");
+  assert.equal(result.calls.split("\n")[stop + 1], `cutover-record ${OLD_IMAGE_ID}`, result.calls);
+  assert.ok(lineIndex(result.calls, `${PRODUCTION_RUN} ${OLD_IMAGE_ID}`) > stop, result.detail);
+});
+
+test("rebuilding the running SHA keeps the previous release's image", () => {
+  const result = runRollout({ env: { PRODUCTION_IMAGE: NEW_IMAGE } });
+
+  assert.equal(result.status, 0, result.detail);
+  assert.match(result.log, /deploy_success/);
+  assert.doesNotMatch(result.calls, /^image (ls|rm)/m, result.detail);
 });
 
 test("a stop signal during the cutover restores the previous image before exiting", () => {
