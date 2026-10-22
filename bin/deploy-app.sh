@@ -133,13 +133,16 @@ run_git() {
   git -C "$REPO_DIR" "$@"
 }
 
+# --pull re-resolves floating base tags (node:22-alpine and the like) on every
+# build. Without it a release reuses whatever base the host cached first, so a
+# runtime security fix never reaches an app until someone pulls by hand.
 build_image() {
   if [ -n "$DOCKERFILE" ]; then
-    docker build -f "$DOCKERFILE" -t "$NEW_IMAGE" "$DOCKER_BUILD_CONTEXT"
+    docker build --pull -f "$DOCKERFILE" -t "$NEW_IMAGE" "$DOCKER_BUILD_CONTEXT"
     return
   fi
 
-  docker build -t "$NEW_IMAGE" "$DOCKER_BUILD_CONTEXT"
+  docker build --pull -t "$NEW_IMAGE" "$DOCKER_BUILD_CONTEXT"
 }
 
 run_container() {
@@ -373,9 +376,17 @@ fi
 
 OLD_CONTAINER_ID="$(docker ps -aq -f "name=^/${CONTAINER_NAME}$" || true)"
 OLD_IMAGE=""
+SAME_SHA_REBUILD="0"
 
 if [ -n "$OLD_CONTAINER_ID" ]; then
   OLD_IMAGE="$(docker inspect "$CONTAINER_NAME" --format "{{.Config.Image}}" || true)"
+  # Rebuilding the running SHA (to pick up a patched base image) has just moved
+  # that tag onto the new build. Roll back by the running image's ID instead,
+  # which stays on disk untagged until a later prune.
+  if [ "$OLD_IMAGE" = "$NEW_IMAGE" ]; then
+    SAME_SHA_REBUILD="1"
+    OLD_IMAGE="$(docker inspect "$CONTAINER_NAME" --format "{{.Image}}" || true)"
+  fi
 fi
 
 STALE_CANDIDATE_ID="$(docker ps -aq -f "name=^/${CANDIDATE_CONTAINER_NAME}$" || true)"
@@ -434,11 +445,16 @@ clear_cutover
 
 ENDED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
-docker image ls "$IMAGE_NAME" --format "{{.Repository}}:{{.Tag}}" |
-  while IFS= read -r image; do
-    if [ "$image" != "$NEW_IMAGE" ] && [ "$image" != "$OLD_IMAGE" ]; then
-      docker image rm "$image" >/dev/null 2>&1 || true
-    fi
-  done
+# A same-SHA rebuild's OLD_IMAGE is an ID, not a tag, so the pruning below would
+# delete the previous release's tag. Keep it: it is still the rollback target
+# for the next real release.
+if [ "$SAME_SHA_REBUILD" != "1" ]; then
+  docker image ls "$IMAGE_NAME" --format "{{.Repository}}:{{.Tag}}" |
+    while IFS= read -r image; do
+      if [ "$image" != "$NEW_IMAGE" ] && [ "$image" != "$OLD_IMAGE" ]; then
+        docker image rm "$image" >/dev/null 2>&1 || true
+      fi
+    done
+fi
 
 log "deploy_success sha=$CURRENT_SHA image=$NEW_IMAGE started_at=$STARTED_AT ended_at=$ENDED_AT"
