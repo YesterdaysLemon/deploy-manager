@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Approve a release · Deploy Manager</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/approve.webmanifest" />
+    <link rel="apple-touch-icon" href="/approve-icon-180.png" />
+    <meta name="theme-color" content="#1f7a75" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Approvals" />
+    <link rel="stylesheet" href="/approval.css" />
+    <script src="/approve.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>Releases waiting for you</h1>
+      <p class="lede">Each one is built and passed its health check. Your passkey signs exactly what is shown: the app, the commit and the image ID.</p>
+      <div id="asks" aria-live="polite"><p class="empty">Loading…</p></div>
+      <p class="footnote">Add this page to your home screen to keep it one tap away. First time here? <a href="/enroll">Enroll your passkey</a>.</p>
+    </main>
+  </body>
+</html>

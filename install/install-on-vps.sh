@@ -37,6 +37,7 @@ install -o root -g root -m 0755 "$INSTALL_DIR/bin/deploy-app-run" /usr/local/sbi
 install -o root -g root -m 0755 "$INSTALL_DIR/bin/deploy-manager-sudo" /usr/local/bin/deploy-manager-sudo
 install -d -o root -g root -m 0755 /usr/local/libexec/deploy-manager
 install -o root -g root -m 0755 "$INSTALL_DIR/bin/deploy-app.sh" /usr/local/libexec/deploy-manager/deploy-app.sh
+install -o root -g root -m 0755 "$INSTALL_DIR/bin/approval-gate.mjs" /usr/local/libexec/deploy-manager/approval-gate.mjs
 
 if ! id deploy-manager >/dev/null 2>&1; then
   useradd --system --home /nonexistent --shell /usr/sbin/nologin deploy-manager

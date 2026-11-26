@@ -1,0 +1,14 @@
+{
+  "name": "Approvals",
+  "short_name": "Approvals",
+  "description": "Approve or deny releases waiting for you, with your passkey.",
+  "start_url": "/approve",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#e7dfbd",
+  "theme_color": "#1f7a75",
+  "icons": [
+    { "src": "/approve-icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/approve-icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

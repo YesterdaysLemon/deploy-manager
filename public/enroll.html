@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Enroll a passkey · Deploy Manager</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="/approve.webmanifest" />
+    <link rel="apple-touch-icon" href="/approve-icon-180.png" />
+    <meta name="theme-color" content="#1f7a75" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Approvals" />
+    <link rel="stylesheet" href="/approval.css" />
+    <script src="/enroll.js" defer></script>
+  </head>
+  <body>
+    <main>
+      <h1>Enroll your passkey</h1>
+      <p class="lede">This makes an approver record from a new passkey. Nothing is installed from here: you copy the record onto the server as root, which is what makes it count.</p>
+      <button class="approve" id="enroll" type="button">Create a passkey</button>
+      <p class="status" id="status"></p>
+      <div id="result" hidden>
+        <p>Save this as <code>approver.json</code> on the server, then run:</p>
+        <p><code id="install"></code></p>
+        <textarea id="record" readonly></textarea>
+      </div>
+    </main>
+  </body>
+</html>

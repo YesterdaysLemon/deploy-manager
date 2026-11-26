@@ -42,7 +42,7 @@ test("immutable installed releases record one health-confirmed observation acros
   const temporary=fs.mkdtempSync(path.join(os.tmpdir(),"manager-installed-"));
   const sha="a".repeat(40),release=path.join(temporary,sha),journal=path.join(temporary,"journal.jsonl");
   fs.mkdirSync(release);
-  for(const folder of ["src","public","config"])fs.cpSync(path.join(ROOT,folder),path.join(release,folder),{recursive:true});
+  for(const folder of ["src","public","config","bin"])fs.cpSync(path.join(ROOT,folder),path.join(release,folder),{recursive:true});
   try {
     for(let boot=0;boot<2;boot++) {
       const port=await reservePort(),url=`http://127.0.0.1:${port}`;
