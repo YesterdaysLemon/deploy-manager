@@ -16,6 +16,7 @@ document.getElementById("enroll").addEventListener("click", async () => {
         ...options,
         challenge: toBytes(options.challenge),
         user: { ...options.user, id: toBytes(options.user.id) },
+        excludeCredentials: (options.excludeCredentials ?? []).map((item) => ({ ...item, id: toBytes(item.id) })),
       },
     });
     const finish = await fetch("/api/enroll/finish", {
@@ -23,16 +24,16 @@ document.getElementById("enroll").addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         challenge: options.challenge,
+        label: document.getElementById("label").value,
         attestationObject: toB64url(credential.response.attestationObject),
         clientDataJSON: toB64url(credential.response.clientDataJSON),
       }),
     });
     const result = await finish.json();
     if (!finish.ok) throw new Error(result.error ?? finish.status);
-    document.getElementById("record").value = `${JSON.stringify(result.approver, null, 2)}\n`;
-    document.getElementById("install").textContent = result.install;
+    document.getElementById("record").value = result.install;
     document.getElementById("result").hidden = false;
-    status.textContent = "Passkey created.";
+    status.textContent = `Passkey created: ${result.approver.label || "unnamed"}.`;
   } catch (error) {
     status.className = "status bad";
     status.textContent = `Not enrolled: ${error.message}`;

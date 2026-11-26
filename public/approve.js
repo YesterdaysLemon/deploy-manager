@@ -32,7 +32,7 @@ async function answer(nonce, body, status, buttons) {
 function render(data) {
   const root = document.getElementById("asks");
   root.replaceChildren();
-  if (!data.approver) {
+  if (!data.approvers.length) {
     const p = document.createElement("p");
     p.className = "empty";
     p.textContent = "No passkey is enrolled yet. Enroll one at /enroll first.";
@@ -69,15 +69,16 @@ function render(data) {
     const status = document.createElement("p");
     status.className = "status";
     const buttons = [approve, deny];
-    approve.disabled = !data.approver;
+    approve.disabled = !data.approvers.length;
     approve.addEventListener("click", async () => {
       try {
         const challenge = await crypto.subtle.digest("SHA-256", askBytes);
         const credential = await navigator.credentials.get({
           publicKey: {
             challenge,
-            rpId: data.approver.rpId,
-            allowCredentials: [{ type: "public-key", id: toBytes(data.approver.credentialId) }],
+            rpId: data.rpId,
+            // Any enrolled key works: the phone, a security key, a spare.
+            allowCredentials: data.approvers.map((key) => ({ type: "public-key", id: toBytes(key.credentialId) })),
             userVerification: "required",
             timeout: 120000,
           },
@@ -112,7 +113,7 @@ document.addEventListener("click", (event) => {
 async function load() {
   const response = await fetch("/api/approvals", { cache: "no-store" });
   const data = await response.json();
-  const key = JSON.stringify([Boolean(data.approver), data.asks.map((ask) => ask.nonce)]);
+  const key = JSON.stringify([data.approvers.length, data.asks.map((ask) => ask.nonce)]);
   if (key !== shown && !busy) {
     shown = key;
     render(data);

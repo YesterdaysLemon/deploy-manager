@@ -102,6 +102,24 @@ function publicKeyFrom(approver) {
   }
 }
 
+// The approver file holds one or more enrolled authenticators: a phone, a
+// security key on a keychain, a spare. It may be a single record (the first
+// format) or {"approvers": [record, ...]}. Any one of them can say yes.
+export const MAX_APPROVERS = 16;
+
+export function approversFrom(parsed) {
+  const list = Array.isArray(parsed?.approvers) ? parsed.approvers : parsed && typeof parsed === "object" && !Array.isArray(parsed) && parsed.credentialId ? [parsed] : null;
+  if (!list || list.length === 0) throw new ApprovalError("approver_missing");
+  if (list.length > MAX_APPROVERS) throw new ApprovalError("approver_too_many");
+  const seen = new Set();
+  for (const record of list) {
+    validateApprover(record);
+    if (seen.has(record.credentialId)) throw new ApprovalError("approver_duplicate");
+    seen.add(record.credentialId);
+  }
+  return list;
+}
+
 export function validateApprover(approver) {
   if (!approver || typeof approver !== "object") throw new ApprovalError("approver_missing");
   for (const field of ["credentialId", "publicKey", "rpId", "origin"]) {
@@ -115,13 +133,14 @@ export function validateApprover(approver) {
 // Checks one WebAuthn assertion against one ask. Throws ApprovalError with a
 // stable code on any failure. It does not record the yes as spent; the root
 // CLI does that atomically after this returns.
-export function verifyAssertion({ askBytes, assertion, approver, now = Date.now() }) {
+export function verifyAssertion({ askBytes, assertion, approver, approvers, now = Date.now() }) {
   const ask = parseAsk(askBytes);
-  validateApprover(approver);
+  const enrolled = approvers ?? approversFrom(approver);
   if (Math.floor(now / 1000) >= ask.expires_at) throw new ApprovalError("ask_expired");
   if (!assertion || typeof assertion !== "object") throw new ApprovalError("answer_unreadable");
   if (assertion.nonce !== ask.nonce) throw new ApprovalError("answer_for_other_ask");
-  if (assertion.credentialId !== approver.credentialId) throw new ApprovalError("unknown_credential");
+  approver = enrolled.find((record) => record.credentialId === assertion.credentialId);
+  if (!approver) throw new ApprovalError("unknown_credential");
 
   const clientDataBytes = fromB64url(assertion.clientDataJSON, "client_data");
   const authData = fromB64url(assertion.authenticatorData, "authenticator_data");
@@ -150,7 +169,7 @@ export function verifyAssertion({ askBytes, assertion, approver, now = Date.now(
     ? crypto.verify(null, signed, key, signature)
     : crypto.verify("sha256", signed, { key, dsaEncoding: "der" }, signature);
   if (!valid) throw new ApprovalError("bad_signature");
-  return { ask, signCount: authData.readUInt32BE(33) };
+  return { ask, signCount: authData.readUInt32BE(33), credentialId: approver.credentialId, label: approver.label ?? "" };
 }
 
 // --- Registration: a passkey's attestation becomes an approver record. ---
@@ -220,7 +239,7 @@ function coseToPublicKey(cose) {
 // Turns navigator.credentials.create() output into an approver record. The
 // caller checks the challenge it issued. Nothing here installs the record:
 // an operator copies it into /etc/deploy-manager/approver.json as root.
-export function parseRegistration({ attestationObject, clientDataJSON, challenge, rpId, origin, now = Date.now() }) {
+export function parseRegistration({ attestationObject, clientDataJSON, challenge, rpId, origin, label = "", now = Date.now() }) {
   const clientDataBytes = fromB64url(clientDataJSON, "client_data");
   let clientData;
   try {
@@ -248,12 +267,36 @@ export function parseRegistration({ attestationObject, clientDataJSON, challenge
   const { alg, key } = coseToPublicKey(cose);
   return {
     credentialId: b64url(credentialId),
+    label: cleanLabel(label),
     alg,
     publicKey: key.export({ type: "spki", format: "pem" }),
     rpId,
     origin,
     enrolledAt: new Date(now).toISOString(),
   };
+}
+
+export function cleanLabel(label) {
+  return String(label ?? "").replace(/[^\p{L}\p{N} ._-]/gu, "").trim().slice(0, 40);
+}
+
+// Adds an enrolled record to an approver file's contents, refusing a
+// duplicate. Returns the new contents as {"approvers": [...]}.
+export function addApprover(existing, record) {
+  const list = existing ? approversFrom(existing) : [];
+  validateApprover(record);
+  if (list.some((item) => item.credentialId === record.credentialId)) throw new ApprovalError("approver_duplicate");
+  const next = { approvers: [...list, { ...record, label: cleanLabel(record.label) }] };
+  approversFrom(next);
+  return next;
+}
+
+export function removeApprover(existing, credentialId) {
+  const list = approversFrom(existing);
+  const rest = list.filter((item) => item.credentialId !== credentialId);
+  if (rest.length === list.length) throw new ApprovalError("approver_not_found");
+  if (rest.length === 0) throw new ApprovalError("approver_last_one");
+  return { approvers: rest };
 }
 
 // --- Files. Answers come from the unprivileged manager, so they are read
@@ -327,7 +370,7 @@ export function main(argv) {
     } catch {
       throw new ApprovalError("approver_unreadable");
     }
-    verifyAssertion({ askBytes, assertion: answer, approver });
+    const result = verifyAssertion({ askBytes, assertion: answer, approver });
     // Spending is the last step and is atomic: a second spend of the same
     // nonce finds the record and is refused.
     try {
@@ -336,7 +379,45 @@ export function main(argv) {
       if (error.code === "EEXIST") throw new ApprovalError("yes_already_spent");
       throw new ApprovalError("spent_record_unwritable");
     }
-    process.stdout.write(`approval=granted nonce=${ask.nonce} image=${ask.image}\n`);
+    process.stdout.write(`approval=granted nonce=${ask.nonce} image=${ask.image} key=${result.label || result.credentialId.slice(0, 12)}\n`);
+    return 0;
+  }
+  // Operator commands, run as root on the server. add-approver reads one
+  // record (JSON from the enroll page) on stdin.
+  if (command === "add-approver" || command === "remove-approver" || command === "list-approvers") {
+    const file = options.file;
+    if (!file) throw new ApprovalError("bad_arguments");
+    let existing = null;
+    if (fs.existsSync(file)) {
+      try {
+        existing = JSON.parse(readSmallFile(file).toString("utf8"));
+      } catch {
+        throw new ApprovalError("approver_unreadable");
+      }
+    }
+    if (command === "list-approvers") {
+      for (const record of existing ? approversFrom(existing) : []) {
+        process.stdout.write(`${record.credentialId}\t${record.label || "(no label)"}\t${record.enrolledAt ?? ""}\n`);
+      }
+      return 0;
+    }
+    let next;
+    if (command === "add-approver") {
+      let record;
+      try {
+        record = JSON.parse(fs.readFileSync(0, "utf8"));
+      } catch {
+        throw new ApprovalError("record_unreadable");
+      }
+      if (options.label) record.label = options.label;
+      next = addApprover(existing, record);
+    } else {
+      next = removeApprover(existing, options.credential);
+    }
+    const temporary = `${file}.${crypto.randomBytes(4).toString("hex")}.tmp`;
+    writeNew(temporary, `${JSON.stringify(next, null, 2)}\n`, 0o644);
+    fs.renameSync(temporary, file);
+    process.stdout.write(`approvers=${next.approvers.length}\n`);
     return 0;
   }
   throw new ApprovalError("unknown_command");
