@@ -92,3 +92,29 @@ rule covers every registered app ID; do not add per-app sudoers rules, and
 register the app with the existing manager rather than starting a second
 instance for it. For a failed release, follow the existing rollout
 receipt and rollback path; configuration rollback is a separate operator action.
+
+## Keeping data across releases
+
+A web app that keeps a little state of its own (sign-in keys, a JSON ledger,
+conversation files) can name one host directory in its fleet entry:
+
+```json
+{"dataDirectory": "/srv/liaison/data", "dockerfile": "deploy/liaison/Dockerfile"}
+```
+
+Registration writes `DATA_DIRECTORY` (and `DOCKERFILE`) into the app's env
+file. The deploy script bind-mounts the directory at `/data` (`DATA_TARGET`
+changes it) in both the candidate and the production container. It refuses a
+directory outside `/srv`, a symbolic link, a missing directory, or a path with
+anything but letters, digits and `/._-`, and stops before `docker run`.
+
+Create the directory before the first release, owned by the image's user and
+not writable by group or other, for example
+`install -d -o 65532 -g 65532 -m 0700 /srv/liaison/data`.
+
+**Trade-off.** This keeps the candidate rollout, so for the health-check window
+two containers share the directory. That suits apps whose start-up only reads
+and whose writes are small appends or atomic renames. Anything with a real
+database or one-writer rules uses the stateful strategy
+([stateful-services.md](stateful-services.md)) with its backup gate. The data
+directory is not backed up by Deploy Manager; include it in the host's backups.

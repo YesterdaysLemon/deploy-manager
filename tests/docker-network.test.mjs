@@ -41,7 +41,7 @@ function quote(value) {
  * Runs a full deploy against a stubbed docker and returns everything the
  * stub was asked to do.
  */
-function deployWith({ dockerNetwork, containerEnvFile }) {
+function deployWith({ dockerNetwork, containerEnvFile, dataDirectory, dataDirectoryIsReal = true }) {
   const shell = findShell();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "deploy-manager-network-"));
 
@@ -54,6 +54,11 @@ function deployWith({ dockerNetwork, containerEnvFile }) {
     const sha = "0123456789abcdef0123456789abcdef01234567";
 
     fs.mkdirSync(repo);
+    // The script keeps data directories under /srv. Tests cannot make /srv,
+    // so they move that root into the temporary directory.
+    const dataRoot = path.join(tmp, "srv");
+    fs.mkdirSync(path.join(dataRoot, "liaison", "data"), { recursive: true });
+    fs.symlinkSync(path.join(dataRoot, "liaison", "data"), path.join(dataRoot, "linked"));
 
     // Every docker verb succeeds; we only care what `run` was invoked with.
     fs.writeFileSync(
@@ -100,6 +105,11 @@ return 0
       `ROLLOUT_STATE_DIR=${quote(posix(path.join(tmp, "rollout")))}`,
     ];
     if (dockerNetwork) lines.push(`DOCKER_NETWORK=${dockerNetwork}`);
+    if (dataDirectory) {
+      lines.push(`DATA_DIRECTORY_ROOT=${quote(posix(dataRoot))}`);
+      const resolved = dataDirectory.startsWith("/") ? dataDirectory : posix(path.join(dataRoot, dataDirectory));
+      lines.push(`DATA_DIRECTORY=${quote(resolved)}`);
+    }
     if (containerEnvFile) {
       const runtimeEnv = path.join(tmp, "runtime.env");
       fs.writeFileSync(runtimeEnv, "EXAMPLE=1\n");
@@ -123,6 +133,8 @@ return 0
     return {
       status: result.status,
       stderr: result.stderr,
+      log: fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : "",
+      dataRoot: posix(dataRoot),
       calls: fs.existsSync(dockerLog) ? fs.readFileSync(dockerLog, "utf8") : "",
     };
   } finally {
@@ -169,4 +181,25 @@ test("DOCKER_NETWORK composes with CONTAINER_ENV_FILE", () => {
     calls.includes("run -d --network sidecar-net --name test-app --restart unless-stopped --env-file"),
     `network and env-file should both be applied:\n${calls}`,
   );
+});
+
+test("DATA_DIRECTORY mounts one host directory into the candidate and production", () => {
+  const { status, calls, stderr, dataRoot } = deployWith({ dataDirectory: "liaison/data" });
+  assert.equal(status, 0, `deploy failed\nstderr:\n${stderr}\ndocker:\n${calls}`);
+  const mount = `--mount type=bind,source=${dataRoot}/liaison/data,target=/data`;
+  assert.ok(calls.includes(`run -d ${mount} --name test-app-candidate`), `candidate should mount the data:\n${calls}`);
+  assert.ok(calls.includes(`run -d ${mount} --name test-app --restart unless-stopped`), `production should mount the data:\n${calls}`);
+});
+
+test("DATA_DIRECTORY outside the data root, through a link, or with odd characters stops before docker runs", () => {
+  for (const [dataDirectory, reason] of [
+    ["/etc/shadow-dir", "data_directory_outside_srv"],
+    ["linked", "data_directory_missing_or_link"],
+    ["liaison/da ta", "data_directory_unsafe_characters"],
+  ]) {
+    const { status, calls, log } = deployWith({ dataDirectory });
+    assert.notEqual(status, 0, `${dataDirectory} should be refused`);
+    assert.match(log, new RegExp(`reason=${reason}`), `${dataDirectory}: wrong reason in\n${log}`);
+    assert.ok(!calls.includes("run "), `${dataDirectory}: docker run must not happen:\n${calls}`);
+  }
 });

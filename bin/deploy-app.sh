@@ -122,6 +122,30 @@ if ! flock -n 9; then
   fail "deploy_already_running"
 fi
 
+# Optional: one host directory bind-mounted into the container for state that
+# must outlive a release (docs/add-app.md, "Keeping data across releases").
+# It must be a real directory under /srv, named in plain characters, because
+# the mount argument is word-split at the call sites below. Both the candidate
+# and production containers see it during the health-check window.
+DATA_TARGET="${DATA_TARGET:-/data}"
+DATA_DIRECTORY_ROOT="${DATA_DIRECTORY_ROOT:-/srv}"
+if [ -n "${DATA_DIRECTORY:-}" ]; then
+  case "$DATA_DIRECTORY" in
+    "$DATA_DIRECTORY_ROOT"/*) ;;
+    *) fail "data_directory_outside_srv" ;;
+  esac
+  case "${DATA_DIRECTORY}${DATA_TARGET}" in
+    *[!A-Za-z0-9/._-]* | *..*) fail "data_directory_unsafe_characters" ;;
+  esac
+  case "$DATA_TARGET" in
+    /*) ;;
+    *) fail "data_target_not_absolute" ;;
+  esac
+  if [ -L "$DATA_DIRECTORY" ] || [ ! -d "$DATA_DIRECTORY" ]; then
+    fail "data_directory_missing_or_link"
+  fi
+fi
+
 health_check() {
   url="$1"
   attempt=1
@@ -175,6 +199,10 @@ run_container() {
   NETWORK_ARG=""
   if [ -n "${DOCKER_NETWORK:-}" ]; then
     NETWORK_ARG="--network ${DOCKER_NETWORK}"
+  fi
+  # Same word-splitting rule: checked above to hold no spaces or commas.
+  if [ -n "${DATA_DIRECTORY:-}" ]; then
+    NETWORK_ARG="${NETWORK_ARG} --mount type=bind,source=${DATA_DIRECTORY},target=${DATA_TARGET}"
   fi
 
   if [ -n "${CONTAINER_ENV_FILE:-}" ]; then
