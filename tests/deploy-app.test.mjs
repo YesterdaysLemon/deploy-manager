@@ -77,7 +77,13 @@ case "$command" in
   inspect)
     case " $* " in
       *"State.Running"*) printf '%s\\n' "\${PRODUCTION_RUNNING:-false}"; return 0 ;;
-      *"{{.Image}}"*) printf '%s\\n' "$OLD_IMAGE_ID"; return 0 ;;
+      *"{{.Image}}"*)
+        if [ -f "$DOCKER_LOG.production-new" ]; then
+          printf '%s\\n' "\${RUNNING_IMAGE_ID:-$(cat "$DOCKER_LOG.image-id" 2>/dev/null || printf '%s' "$NEW_IMAGE_ID")}"
+        else
+          printf '%s\\n' "$OLD_IMAGE_ID"
+        fi
+        return 0 ;;
     esac
     printf '%s\\n' "\${PRODUCTION_IMAGE:-test-image:known-good}"
     return 0
@@ -97,11 +103,18 @@ case "$command" in
     if [ "$container_name" = "test-app" ] && [ "$image" = "$NEW_IMAGE" ] && [ "\${FAIL_NEW_RUN:-0}" = "1" ]; then
       return 125
     fi
+    if [ "$container_name" = "test-app" ] && [ "$image" = "$NEW_IMAGE" ]; then
+      : > "$DOCKER_LOG.production-new"
+    fi
     printf '%s\\n' container-id
     return 0
     ;;
   logs) return 0 ;;
-  image) return 0 ;;
+  image)
+    if [ "$1" = "inspect" ]; then
+      cat "$DOCKER_LOG.image-id" 2>/dev/null || printf '%s\\n' "$NEW_IMAGE_ID"
+    fi
+    return 0 ;;
 esac
 return 0
 }
@@ -460,4 +473,186 @@ test("the root wrapper passes recovery through with only an app id", () => {
   assert.equal(runWrapper(["--recover", "--recover"]).status, 64);
   assert.equal(runWrapper(["-app-one", SHA]).status, 64);
   assert.equal(runWrapper(["--recover"]).status, 64);
+});
+
+// --- The approval gate (docs/approval.md). These runs are asynchronous: the
+// rollout opens an ask and waits, and the test answers it like a phone would.
+
+const NEW_IMAGE_ID = `sha256:${"ab".repeat(32)}`;
+const GATE = path.join(ROOT, "bin", "approval-gate.mjs");
+
+async function runGatedRollout({ respond = () => null, env = {}, ttl = "60" } = {}) {
+  const { softwarePasskey } = await import("./passkey.mjs");
+  const key = softwarePasskey();
+  const shell = findShell();
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "deploy-manager-gate-"));
+  const dirs = {
+    asks: path.join(tmp, "asks"),
+    answers: path.join(tmp, "answers"),
+    spent: path.join(tmp, "rollout", "approvals-spent"),
+  };
+  try {
+    const repo = path.join(tmp, "repo");
+    fs.mkdirSync(repo);
+    fs.mkdirSync(dirs.answers);
+    const harness = path.join(tmp, "harness.sh");
+    const logFile = path.join(tmp, "deploy.log");
+    const dockerLog = path.join(tmp, "docker.log");
+    const approverFile = path.join(tmp, "approver.json");
+    fs.writeFileSync(approverFile, JSON.stringify(key.approver));
+    fs.writeFileSync(harness, HARNESS);
+    const envFile = path.join(tmp, "app.env");
+    fs.writeFileSync(envFile, [
+      "APP_ID=test",
+      `REPO_DIR=${quote(posix(repo))}`,
+      "REPO_USER=",
+      "BRANCH=main",
+      "IMAGE_NAME=test-image",
+      "CONTAINER_NAME=test-app",
+      "CANDIDATE_CONTAINER_NAME=test-app-candidate",
+      "APP_PORT=3100",
+      "CANDIDATE_APP_PORT=3101",
+      "CONTAINER_PORT=8080",
+      "HEALTH_PATH=/healthz",
+      "HEALTH_ATTEMPTS=1",
+      "HEALTH_SLEEP_SECONDS=0",
+      `LOG_FILE=${quote(posix(logFile))}`,
+      `LOCK_FILE=${quote(posix(path.join(tmp, "deploy.lock")))}`,
+      `ROLLOUT_STATE_DIR=${quote(posix(path.join(tmp, "rollout")))}`,
+      "REQUIRE_APPROVAL=yes",
+      `APPROVAL_TTL_SECONDS=${ttl}`,
+      "APPROVAL_POLL_SECONDS=1",
+      `APPROVAL_GATE=${quote(posix(GATE))}`,
+      `APPROVAL_ASK_DIR=${quote(posix(dirs.asks))}`,
+      `APPROVAL_ANSWER_DIR=${quote(posix(dirs.answers))}`,
+      `APPROVER_FILE=${quote(posix(approverFile))}`,
+      "",
+    ].join("\n"));
+
+    const child = spawn(shell, [posix(harness)], {
+      env: {
+        ...process.env,
+        DEPLOY_SHA: SHA,
+        ENV_FILE: posix(envFile),
+        DEPLOY_SCRIPT: posix(DEPLOY_SCRIPT),
+        DOCKER_LOG: posix(dockerLog),
+        CUTOVER_FILE_UNDER_TEST: posix(path.join(tmp, "rollout", "test.cutover")),
+        HARNESS_ARGS: "",
+        NEW_IMAGE,
+        NEW_IMAGE_ID,
+        OLD_IMAGE_ID,
+        SHA,
+        ...env,
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    const exited = new Promise((resolve) => child.on("close", resolve));
+
+    let answered = false;
+    let askSeen = null;
+    let status = null;
+    const deadline = Date.now() + 30_000;
+    while (status === null && Date.now() < deadline) {
+      const result = await Promise.race([exited, new Promise((r) => setTimeout(() => r(undefined), 100))]);
+      if (result !== undefined) { status = result; break; }
+      if (answered || !fs.existsSync(dirs.asks)) continue;
+      const file = fs.readdirSync(dirs.asks).find((name) => name.endsWith(".json"));
+      if (!file) continue;
+      const askBytes = fs.readFileSync(path.join(dirs.asks, file));
+      askSeen = JSON.parse(askBytes.toString("utf8"));
+      const answer = respond({ askBytes, ask: askSeen, key, imageIdFile: `${dockerLog}.image-id` });
+      if (answer) fs.writeFileSync(path.join(dirs.answers, file), JSON.stringify(answer));
+      answered = true;
+    }
+    if (status === null) { child.kill("SIGKILL"); throw new Error("gated rollout did not finish"); }
+
+    const log = fs.existsSync(logFile) ? fs.readFileSync(logFile, "utf8") : "";
+    const calls = fs.existsSync(dockerLog) ? fs.readFileSync(dockerLog, "utf8") : "";
+    const spent = fs.existsSync(dirs.spent) ? fs.readdirSync(dirs.spent) : [];
+    const asksLeft = fs.existsSync(dirs.asks) ? fs.readdirSync(dirs.asks) : [];
+    return { status, stdout, log, calls, spent, asksLeft, askSeen, detail: `status: ${status}\nstdout:\n${stdout}\ndocker:\n${calls}\nlog:\n${log}` };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+test("with approval required, production waits for a passkey yes over the exact image", async () => {
+  const result = await runGatedRollout({ respond: ({ askBytes, key }) => key.sign(askBytes) });
+
+  assert.equal(result.status, 0, result.detail);
+  assert.equal(result.askSeen.image, NEW_IMAGE_ID);
+  assert.equal(result.askSeen.sha, SHA);
+  assert.match(result.log, /release_phase=approval/);
+  assert.match(result.log, /approval=granted/);
+  assert.match(result.log, /deploy_success/);
+  assert.equal(result.spent.length, 1, "the yes must be recorded as spent");
+  assert.deepEqual(result.asksLeft, [], "a decided ask is withdrawn");
+  const candidateRemoved = result.calls.indexOf("rm -f test-app-candidate");
+  const productionStop = result.calls.indexOf("stop test-app");
+  assert.ok(candidateRemoved >= 0 && productionStop > candidateRemoved, result.calls);
+});
+
+test("without an answer the ask expires and production is never touched", async () => {
+  const result = await runGatedRollout({ ttl: "5" });
+
+  assert.notEqual(result.status, 0, result.detail);
+  assert.match(result.log, /reason=approval_expired/);
+  assert.ok(!result.calls.includes("stop test-app"), result.calls);
+  assert.deepEqual(result.asksLeft, []);
+});
+
+test("a denial ends the release before production is touched", async () => {
+  const result = await runGatedRollout({ respond: ({ ask }) => ({ decision: "deny", nonce: ask.nonce }) });
+
+  assert.notEqual(result.status, 0, result.detail);
+  assert.match(result.log, /reason=approval_denied/);
+  assert.ok(!result.calls.includes("stop test-app"), result.calls);
+});
+
+test("a yes from another passkey is refused", async () => {
+  const { softwarePasskey } = await import("./passkey.mjs");
+  const stranger = softwarePasskey();
+  const result = await runGatedRollout({
+    respond: ({ askBytes, key }) => ({ ...stranger.sign(askBytes), credentialId: key.approver.credentialId }),
+  });
+
+  assert.notEqual(result.status, 0, result.detail);
+  assert.match(result.log, /reason=bad_signature/);
+  assert.match(result.log, /reason=approval_refused/);
+  assert.ok(!result.calls.includes("stop test-app"), result.calls);
+  assert.equal(result.spent.length, 0);
+});
+
+test("an image that changes after the yes is refused before the swap", async () => {
+  const result = await runGatedRollout({
+    respond: ({ askBytes, key, imageIdFile }) => {
+      fs.writeFileSync(imageIdFile, `sha256:${"cd".repeat(32)}\n`);
+      return key.sign(askBytes);
+    },
+  });
+
+  assert.notEqual(result.status, 0, result.detail);
+  assert.match(result.log, /reason=approved_image_changed/);
+  assert.ok(!result.calls.includes("stop test-app"), result.calls);
+});
+
+test("production running anything but the approved image is rolled back", async () => {
+  const result = await runGatedRollout({
+    respond: ({ askBytes, key }) => key.sign(askBytes),
+    env: { RUNNING_IMAGE_ID: `sha256:${"ef".repeat(32)}` },
+  });
+
+  assert.notEqual(result.status, 0, result.detail);
+  assert.match(result.log, /reason=approved_image_mismatch_rolled_back/);
+  assert.ok(result.calls.includes(`${PRODUCTION_RUN} ${OLD_IMAGE}`), result.calls);
+});
+
+test("an unrecognized approval setting fails closed before anything is built", () => {
+  const result = runRollout({ env: { REQUIRE_APPROVAL: "maybe" } });
+
+  assert.notEqual(result.status, 0, result.detail);
+  assert.match(result.log, /reason=require_approval_must_be_yes_or_no/);
+  assert.ok(!result.calls.includes("build "), result.calls);
 });

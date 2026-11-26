@@ -72,6 +72,20 @@ CUTOVER_FILE="${ROLLOUT_STATE_DIR}/${APP_ID}.cutover"
 CUTOVER_ACTIVE="0"
 STARTED_AT="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 NEW_IMAGE="${IMAGE_NAME}:${REQUESTED_SHA}"
+# The approval gate (docs/approval.md). With REQUIRE_APPROVAL=yes the
+# production swap waits for a passkey yes over this app, commit and built
+# image ID. The ask directory and spent records are root-owned; answers come
+# from the unprivileged manager and are checked here, never trusted.
+REQUIRE_APPROVAL="${REQUIRE_APPROVAL:-no}"
+APPROVAL_TTL_SECONDS="${APPROVAL_TTL_SECONDS:-900}"
+APPROVAL_POLL_SECONDS="${APPROVAL_POLL_SECONDS:-2}"
+APPROVAL_GATE="${APPROVAL_GATE:-/usr/local/libexec/deploy-manager/approval-gate.mjs}"
+APPROVAL_ASK_DIR="${APPROVAL_ASK_DIR:-/var/lib/deploy-manager-approvals}"
+APPROVAL_ANSWER_DIR="${APPROVAL_ANSWER_DIR:-/var/lib/deploy-manager/approval-answers}"
+APPROVAL_SPENT_DIR="${APPROVAL_SPENT_DIR:-${ROLLOUT_STATE_DIR}/approvals-spent}"
+APPROVER_FILE="${APPROVER_FILE:-/etc/deploy-manager/approver.json}"
+APPROVED_IMAGE_ID=""
+APPROVAL_NONCE=""
 HEALTH_URL="http://127.0.0.1:${APP_PORT}${HEALTH_PATH}"
 
 mkdir -p "$(dirname "$LOG_FILE")"
@@ -307,6 +321,68 @@ repair_interrupted_cutover() {
   return 1
 }
 
+# Withdraws the open ask so the approval page stops offering it.
+close_ask() {
+  if [ -n "$APPROVAL_NONCE" ]; then
+    # Answers live in the manager's directory; the manager tidies those.
+    rm -f "$APPROVAL_ASK_DIR/$APPROVAL_NONCE.json" 2>/dev/null || true
+    APPROVAL_NONCE=""
+  fi
+}
+
+image_id() {
+  docker image inspect "$NEW_IMAGE" --format '{{.Id}}' 2>/dev/null || true
+}
+
+# Opens an ask bound to the built image's ID and waits for an answer. Returns
+# only when a yes for exactly this ask has been verified and spent; any other
+# outcome ends the release before production is touched.
+wait_for_approval() {
+  APPROVED_IMAGE_ID="$(image_id)"
+  case "$APPROVED_IMAGE_ID" in
+    sha256:*) ;;
+    *) fail "approval_image_id_unavailable sha=$CURRENT_SHA" ;;
+  esac
+  [ -r "$APPROVER_FILE" ] || fail "approval_no_approver_enrolled sha=$CURRENT_SHA file=$APPROVER_FILE"
+  mkdir -p "$APPROVAL_ASK_DIR" "$APPROVAL_SPENT_DIR" || fail "approval_state_dir_unavailable sha=$CURRENT_SHA"
+  chmod 0755 "$APPROVAL_ASK_DIR" && chmod 0700 "$APPROVAL_SPENT_DIR" || fail "approval_state_dir_unavailable sha=$CURRENT_SHA"
+
+  APPROVAL_NONCE="$(node "$APPROVAL_GATE" open --app "$APP_ID" --sha "$CURRENT_SHA" --image "$APPROVED_IMAGE_ID" --ttl "$APPROVAL_TTL_SECONDS" --ask-dir "$APPROVAL_ASK_DIR")" ||
+    fail "approval_ask_not_opened sha=$CURRENT_SHA"
+  emit_phase approval
+  log "approval_waiting nonce=$APPROVAL_NONCE image=$APPROVED_IMAGE_ID expires_in=${APPROVAL_TTL_SECONDS}s"
+
+  approval_deadline=$(( $(date +%s) + APPROVAL_TTL_SECONDS ))
+  while :; do
+    if [ -e "$APPROVAL_ANSWER_DIR/$APPROVAL_NONCE.json" ] || [ -L "$APPROVAL_ANSWER_DIR/$APPROVAL_NONCE.json" ]; then
+      verdict=0
+      verdict_line="$(node "$APPROVAL_GATE" verify \
+        --ask-file "$APPROVAL_ASK_DIR/$APPROVAL_NONCE.json" \
+        --answer-file "$APPROVAL_ANSWER_DIR/$APPROVAL_NONCE.json" \
+        --approver "$APPROVER_FILE" \
+        --spent-dir "$APPROVAL_SPENT_DIR")" || verdict=$?
+      log "$verdict_line"
+      case "$verdict" in
+        0) close_ask; break ;;
+        3) close_ask; fail "approval_denied sha=$CURRENT_SHA" ;;
+        *) close_ask; fail "approval_refused sha=$CURRENT_SHA" ;;
+      esac
+    fi
+    if [ "$(date +%s)" -ge "$approval_deadline" ]; then
+      close_ask
+      fail "approval_expired sha=$CURRENT_SHA"
+    fi
+    sleep "$APPROVAL_POLL_SECONDS"
+  done
+
+  # The yes covers this image ID only. A tag moved after the ask was opened
+  # ends the release here.
+  if [ "$(image_id)" != "$APPROVED_IMAGE_ID" ]; then
+    fail "approved_image_changed sha=$CURRENT_SHA approved=$APPROVED_IMAGE_ID"
+  fi
+  log "approval_granted image=$APPROVED_IMAGE_ID"
+}
+
 # Stopping deploy-manager.service signals its whole cgroup, including this root
 # rollout. A stop before the swap just ends the run; a stop during the swap
 # restores the previous image first, within the unit's TimeoutStopSec.
@@ -314,6 +390,7 @@ stop_requested() {
   trap '' HUP INT TERM
   # The manager reading stdout is stopping too; write only to the root log.
   exec >/dev/null 2>&1
+  close_ask
   if [ "$CUTOVER_ACTIVE" = "1" ]; then
     restore_old_image "stopped_during_cutover"
   fi
@@ -367,6 +444,14 @@ if [ "$CURRENT_SHA" != "$REQUESTED_SHA" ]; then
   fail "sha_mismatch current=$CURRENT_SHA requested=$REQUESTED_SHA"
 fi
 
+if [ "$REQUIRE_APPROVAL" = "yes" ] && [ -n "${STATEFUL_RUNTIME_FILE:-}" ]; then
+  fail "approval_not_supported_for_stateful_services"
+fi
+case "$REQUIRE_APPROVAL" in
+  yes|no) ;;
+  *) fail "require_approval_must_be_yes_or_no value=$REQUIRE_APPROVAL" ;;
+esac
+
 emit_phase build
 build_image || fail "docker_build_failed sha=$CURRENT_SHA"
 
@@ -409,6 +494,10 @@ fi
 emit_phase candidate
 docker rm -f "$CANDIDATE_CONTAINER_NAME" >/dev/null 2>&1 || fail "candidate_rm_failed sha=$CURRENT_SHA"
 
+if [ "$REQUIRE_APPROVAL" = "yes" ]; then
+  wait_for_approval
+fi
+
 emit_phase promote
 if [ -n "$OLD_IMAGE" ]; then
   # Recorded before production stops, so the stop handler above, or a later
@@ -432,6 +521,13 @@ fi
 
 if ! run_container "$CONTAINER_NAME" "$APP_PORT" "yes" "$NEW_IMAGE" >/dev/null; then
   restore_old_image "docker_run_failed"
+fi
+
+if [ -n "$APPROVED_IMAGE_ID" ]; then
+  running_image_id="$(docker inspect "$CONTAINER_NAME" --format '{{.Image}}' 2>/dev/null || true)"
+  if [ "$running_image_id" != "$APPROVED_IMAGE_ID" ]; then
+    restore_old_image "approved_image_mismatch"
+  fi
 fi
 
 emit_phase verify

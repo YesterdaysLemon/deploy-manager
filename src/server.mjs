@@ -10,6 +10,7 @@ import {
   ReleaseJournal,
   releaseReplayKey,
 } from "./release-journal.mjs";
+import { createApprovalRoutes } from "./approval-routes.mjs";
 
 const {
   DEPLOY_MANAGER_APPS_FILE = "/etc/deploy-manager/apps.json",
@@ -24,6 +25,11 @@ const {
     ? path.join(process.cwd(), ".deploy-manager")
     : "/var/lib/deploy-manager",
   DEPLOY_MANAGER_JOURNAL_FILE = "",
+  DEPLOY_MANAGER_APPROVAL_ASK_DIR = "/var/lib/deploy-manager-approvals",
+  DEPLOY_MANAGER_APPROVAL_ANSWER_DIR = "",
+  DEPLOY_MANAGER_APPROVER_FILE = "/etc/deploy-manager/approver.json",
+  DEPLOY_MANAGER_APPROVAL_RP_ID = "",
+  DEPLOY_MANAGER_APPROVAL_ORIGIN = "",
 } = process.env;
 
 const appIdPattern = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
@@ -35,6 +41,7 @@ const RELEASE_PHASES = new Set([
   "fetch",
   "build",
   "candidate",
+  "approval",
   "promote",
   "verify",
   "rollback",
@@ -90,6 +97,46 @@ const staticAssets = new Map([
     {
       body: readFileSync(new URL("../public/index.html", import.meta.url)),
       contentType: "text/html; charset=utf-8",
+      cacheControl: "no-cache",
+    },
+  ],
+  [
+    "/approve",
+    {
+      body: readFileSync(new URL("../public/approve.html", import.meta.url)),
+      contentType: "text/html; charset=utf-8",
+      cacheControl: "no-cache",
+    },
+  ],
+  [
+    "/approve.js",
+    {
+      body: readFileSync(new URL("../public/approve.js", import.meta.url)),
+      contentType: "text/javascript; charset=utf-8",
+      cacheControl: "no-cache",
+    },
+  ],
+  [
+    "/enroll",
+    {
+      body: readFileSync(new URL("../public/enroll.html", import.meta.url)),
+      contentType: "text/html; charset=utf-8",
+      cacheControl: "no-cache",
+    },
+  ],
+  [
+    "/enroll.js",
+    {
+      body: readFileSync(new URL("../public/enroll.js", import.meta.url)),
+      contentType: "text/javascript; charset=utf-8",
+      cacheControl: "no-cache",
+    },
+  ],
+  [
+    "/approval.css",
+    {
+      body: readFileSync(new URL("../public/approval.css", import.meta.url)),
+      contentType: "text/css; charset=utf-8",
       cacheControl: "no-cache",
     },
   ],
@@ -783,8 +830,22 @@ if (probes.enabled) {
   probeTimer.unref();
 }
 
+const handleApproval = createApprovalRoutes({
+  askDir: DEPLOY_MANAGER_APPROVAL_ASK_DIR,
+  answerDir: DEPLOY_MANAGER_APPROVAL_ANSWER_DIR || path.join(DEPLOY_MANAGER_STATE_DIR, "approval-answers"),
+  approverFile: DEPLOY_MANAGER_APPROVER_FILE,
+  rpId: DEPLOY_MANAGER_APPROVAL_RP_ID,
+  origin: DEPLOY_MANAGER_APPROVAL_ORIGIN,
+  readBody: readRequestBody,
+  sendJson,
+});
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", "http://localhost");
+
+  if (url.pathname.startsWith("/api/approvals") || url.pathname.startsWith("/api/enroll/")) {
+    if (await handleApproval(request, response, url)) return;
+  }
 
   if (
     (request.method === "GET" || request.method === "HEAD") &&

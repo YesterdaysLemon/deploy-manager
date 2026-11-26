@@ -6,6 +6,7 @@ Linux VPS.**
 [Interactive release city](https://deploy.alirezaafshan.com/) ·
 [Manual setup](docs/manual-setup.md) ·
 [Agent quickstart](docs/agent-quickstart.md) ·
+[Approval gate](docs/approval.md) ·
 [Machine-readable overview](https://deploy.alirezaafshan.com/llms.txt) ·
 [MIT license](LICENSE)
 
@@ -245,6 +246,7 @@ archive checksums live in
   active-release link.
 - `install/systemd/deploy-manager-update.*`: periodic update check and timer.
 - `docs/self-update.md`: trust boundary, bootstrap, rollback, and operations.
+- `docs/approval.md`: the optional passkey yes before a production swap.
 - `docs/agent-quickstart.md`: bounded integration workflow for coding agents.
 - `docs/manual-setup.md`: human-guided setup, review, and installation boundary.
 
