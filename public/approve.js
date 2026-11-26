@@ -101,11 +101,33 @@ function render(data) {
   }
 }
 
+let shown = "";
+let busy = false;
+document.addEventListener("click", (event) => {
+  if (event.target instanceof HTMLButtonElement) busy = true;
+});
+
+// Checks for new asks every few seconds while the page is open. A page in
+// the middle of an answer is left alone; it reloads on the next visit.
 async function load() {
   const response = await fetch("/api/approvals", { cache: "no-store" });
-  render(await response.json());
+  const data = await response.json();
+  const key = JSON.stringify([Boolean(data.approver), data.asks.map((ask) => ask.nonce)]);
+  if (key !== shown && !busy) {
+    shown = key;
+    render(data);
+  }
 }
 
 load().catch((error) => {
   document.getElementById("asks").textContent = `Could not load: ${error.message}`;
+});
+setInterval(() => {
+  if (document.visibilityState === "visible") load().catch(() => {});
+}, 5000);
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") {
+    busy = false;
+    load().catch(() => {});
+  }
 });

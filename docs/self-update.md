@@ -164,6 +164,11 @@ arrived after that check, the bootstrap logs `activation_deferred` and the
 timer activates the SHA once the lane is idle; on a first migration, which has
 no earlier release to keep running, it restores the backup instead.
 
+A release waiting for approval ([approval gate](approval.md)) holds the lane
+too, so the updater and the bootstrap wait until it is approved, denied or
+expired. The gate's root-plane files (`deploy-app.sh` and
+`approval-gate.mjs`) arrive only through a bootstrap re-run.
+
 ## Repository requirements
 
 The repository's default branch is `main`, and the `check.yml` push workflow

@@ -133,6 +133,30 @@ const staticAssets = new Map([
     },
   ],
   [
+    "/approve.webmanifest",
+    {
+      body: readFileSync(new URL("../public/approve.webmanifest", import.meta.url)),
+      contentType: "application/manifest+json",
+      cacheControl: "no-cache",
+    },
+  ],
+  [
+    "/approve-icon-180.png",
+    {
+      body: readFileSync(new URL("../public/approve-icon-180.png", import.meta.url)),
+      contentType: "image/png",
+      cacheControl: "public, max-age=86400",
+    },
+  ],
+  [
+    "/approve-icon-512.png",
+    {
+      body: readFileSync(new URL("../public/approve-icon-512.png", import.meta.url)),
+      contentType: "image/png",
+      cacheControl: "public, max-age=86400",
+    },
+  ],
+  [
     "/approval.css",
     {
       body: readFileSync(new URL("../public/approval.css", import.meta.url)),

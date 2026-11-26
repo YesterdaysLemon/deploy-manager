@@ -62,8 +62,11 @@ files, and writes nothing into the manager's directories.
    DEPLOY_MANAGER_APPROVAL_ORIGIN=https://deploy.example.com
    ```
 
-   A passkey is bound to its relying party ID, so pick the hostname you will
-   keep; moving it means enrolling again.
+   A passkey is bound to its relying party ID, so pick it once. The RP ID may
+   be the parent domain of the page's hostname: with
+   `DEPLOY_MANAGER_APPROVAL_RP_ID=example.com` and the origin
+   `https://deploy.example.com`, the same passkey also works for any later
+   approval page on another subdomain of `example.com`.
 3. **Enroll.** Open `/enroll` on that hostname, create a passkey, save the
    record as `approver.json` on the server, and run the install command the
    page shows:
@@ -72,7 +75,10 @@ files, and writes nothing into the manager's directories.
    sudo install -o root -g root -m 0644 approver.json /etc/deploy-manager/approver.json
    ```
 
-4. **Gate one app.** Add `REQUIRE_APPROVAL=yes` to that app's
+4. **Put it on your phone.** Open `/approve` and add it to the home screen;
+   it opens like an app and checks for new asks every few seconds while
+   open.
+5. **Gate one app.** Add `REQUIRE_APPROVAL=yes` to that app's
    `/etc/deploy-manager/apps/<app>.env`. Other apps are unchanged.
 
 Optional settings in the app env file: `APPROVAL_TTL_SECONDS` (default 900,

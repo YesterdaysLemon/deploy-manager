@@ -18,3 +18,5 @@ button:disabled { opacity: .5; cursor: default; }
 .empty { font-style: italic; }
 textarea { width: 100%; min-height: 200px; font: 12px/1.4 ui-monospace, monospace; box-sizing: border-box; }
 code { font: 13px ui-monospace, monospace; overflow-wrap: anywhere; }
+.footnote { font-size: 13px; line-height: 1.5; }
+.footnote a { color: var(--teal); }
