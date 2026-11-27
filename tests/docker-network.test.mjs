@@ -59,6 +59,8 @@ function deployWith({ dockerNetwork, containerEnvFile, dataDirectory, dataDirect
     const dataRoot = path.join(tmp, "srv");
     fs.mkdirSync(path.join(dataRoot, "liaison", "data"), { recursive: true });
     fs.symlinkSync(path.join(dataRoot, "liaison", "data"), path.join(dataRoot, "linked"));
+    fs.mkdirSync(path.join(tmp, "outside", "data"), { recursive: true });
+    fs.symlinkSync(path.join(tmp, "outside"), path.join(dataRoot, "linked-parent"));
 
     // Every docker verb succeeds; we only care what `run` was invoked with.
     fs.writeFileSync(
@@ -195,6 +197,7 @@ test("DATA_DIRECTORY outside the data root, through a link, or with odd characte
   for (const [dataDirectory, reason] of [
     ["/etc/shadow-dir", "data_directory_outside_srv"],
     ["linked", "data_directory_missing_or_link"],
+    ["linked-parent/data", "data_directory_missing_or_link"],
     ["liaison/da ta", "data_directory_unsafe_characters"],
   ]) {
     const { status, calls, log } = deployWith({ dataDirectory });

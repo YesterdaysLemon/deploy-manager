@@ -141,7 +141,7 @@ if [ -n "${DATA_DIRECTORY:-}" ]; then
     /*) ;;
     *) fail "data_target_not_absolute" ;;
   esac
-  if [ -L "$DATA_DIRECTORY" ] || [ ! -d "$DATA_DIRECTORY" ]; then
+  if [ ! -d "$DATA_DIRECTORY" ] || [ "$(realpath -e -- "$DATA_DIRECTORY")" != "$DATA_DIRECTORY" ]; then
     fail "data_directory_missing_or_link"
   fi
 fi
