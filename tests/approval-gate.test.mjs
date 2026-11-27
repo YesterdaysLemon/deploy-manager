@@ -149,3 +149,41 @@ test("a passkey registration becomes an approver record that verifies its yeses"
   assert.doesNotThrow(() => verifyAssertion({ askBytes, assertion: key.sign(askBytes), approver }));
   refuses("challenge_mismatch", () => parseRegistration({ attestationObject, clientDataJSON, challenge: "other", rpId: RP_ID, origin: ORIGIN }));
 });
+
+test("any enrolled key can say yes, and a key that was removed cannot", async () => {
+  const { addApprover, removeApprover } = await import("../bin/approval-gate.mjs");
+  const phone = softwarePasskey();
+  const keychain = softwarePasskey();
+  let file = addApprover(null, { ...phone.approver, label: "phone" });
+  file = addApprover(file, { ...keychain.approver, label: "keychain YubiKey" });
+  const askBytes = anAsk();
+  assert.equal(verifyAssertion({ askBytes, assertion: phone.sign(askBytes), approver: file }).label, "phone");
+  assert.equal(verifyAssertion({ askBytes, assertion: keychain.sign(askBytes), approver: file }).label, "keychain YubiKey");
+  refuses("approver_duplicate", () => addApprover(file, phone.approver));
+  const without = removeApprover(file, phone.approver.credentialId);
+  refuses("unknown_credential", () => verifyAssertion({ askBytes, assertion: phone.sign(askBytes), approver: without }));
+  refuses("approver_last_one", () => removeApprover(without, keychain.approver.credentialId));
+  // The first, single-record format still works.
+  assert.doesNotThrow(() => verifyAssertion({ askBytes, assertion: phone.sign(askBytes), approver: phone.approver }));
+});
+
+test("the install command from the enroll page adds a key and keeps the others", () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "approval-gate-"));
+  try {
+    const file = path.join(tmp, "approver.json");
+    const phone = softwarePasskey();
+    fs.writeFileSync(file, JSON.stringify(phone.approver)); // an existing single-record file
+    const keychain = softwarePasskey();
+    const record = JSON.stringify({ ...keychain.approver, label: "keychain YubiKey" });
+    const added = spawnSync("sh", ["-c", `printf '%s\\n' '${record}' | "${process.execPath}" "${GATE}" add-approver --file "${file}"`], { encoding: "utf8" });
+    assert.equal(added.status, 0, added.stdout + added.stderr);
+    assert.match(added.stdout, /approvers=2/);
+    const listed = gate("list-approvers", "--file", file);
+    assert.match(listed.stdout, /keychain YubiKey/);
+    assert.equal(listed.stdout.trim().split("\n").length, 2);
+    const again = spawnSync("sh", ["-c", `printf '%s\\n' '${record}' | "${process.execPath}" "${GATE}" add-approver --file "${file}"`], { encoding: "utf8" });
+    assert.match(again.stdout, /reason=approver_duplicate/);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});

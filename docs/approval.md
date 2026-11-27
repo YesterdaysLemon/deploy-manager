@@ -67,13 +67,30 @@ files, and writes nothing into the manager's directories.
    `DEPLOY_MANAGER_APPROVAL_RP_ID=example.com` and the origin
    `https://deploy.example.com`, the same passkey also works for any later
    approval page on another subdomain of `example.com`.
-3. **Enroll.** Open `/enroll` on that hostname, create a passkey, save the
-   record as `approver.json` on the server, and run the install command the
-   page shows:
+3. **Enroll each key.** Open `/enroll`, name the key ("phone", "keychain
+   YubiKey"), create the passkey, and run the command the page shows on the
+   server. It adds that key to `/etc/deploy-manager/approver.json` and keeps
+   the ones already there:
 
    ```
-   sudo install -o root -g root -m 0644 approver.json /etc/deploy-manager/approver.json
+   printf '%s\n' '<record from the page>' | sudo node /usr/local/libexec/deploy-manager/approval-gate.mjs add-approver --file /etc/deploy-manager/approver.json
    ```
+
+   Enroll more than one. Any enrolled key can approve on its own, so losing
+   one never locks you out. A phone passkey syncs through its platform's
+   keychain; a hardware security key stays on the key and cannot be copied,
+   which is why a second one on a keychain is the backup. Nothing secret
+   needs saving elsewhere: the server holds only public keys.
+
+   To see or remove keys, as root:
+
+   ```
+   node /usr/local/libexec/deploy-manager/approval-gate.mjs list-approvers --file /etc/deploy-manager/approver.json
+   node /usr/local/libexec/deploy-manager/approval-gate.mjs remove-approver --file /etc/deploy-manager/approver.json --credential <id>
+   ```
+
+   The last key can't be removed; enroll its replacement first. The first
+   single-record format of `approver.json` still works.
 
 4. **Put it on your phone.** Open `/approve` and add it to the home screen;
    it opens like an app and checks for new asks every few seconds while
@@ -96,5 +113,7 @@ between 5 and 86400), `APPROVAL_POLL_SECONDS` (default 2), and the paths
 - **Any value other than `yes` or `no` fails closed.**
 - **Keep your manual swap and rollback.** The gate only adds a wait; the
   operator paths in `docs/self-update.md` still work.
-- **Losing the passkey** means enrolling a new one and replacing
-  `approver.json` as root. Synced passkeys survive a lost phone.
+- **Approve from a device the agents don't run on.** The page shows exactly
+  what is signed, but a compromised computer can show you one thing and ask
+  you to sign another. A phone, or a security key tapped to the phone, keeps
+  the yes away from the machines that do the work.

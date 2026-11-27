@@ -11,6 +11,7 @@ import path from "node:path";
 
 import {
   ApprovalError,
+  approversFrom,
   b64url,
   parseAsk,
   parseRegistration,
@@ -32,11 +33,11 @@ export function createApprovalRoutes({
 }) {
   const enrollChallenges = new Map();
 
-  function approver() {
+  function approvers() {
     try {
-      return JSON.parse(readSmallFile(approverFile).toString("utf8"));
+      return approversFrom(JSON.parse(readSmallFile(approverFile).toString("utf8")));
     } catch {
-      return null;
+      return [];
     }
   }
 
@@ -101,9 +102,10 @@ export function createApprovalRoutes({
     if (request.method === "GET" && url.pathname === "/api/approvals") {
       const open = openAsks();
       tidyAnswers(open);
-      const enrolled = approver();
+      const enrolled = approvers();
       sendJson(request, response, 200, {
-        approver: enrolled ? { credentialId: enrolled.credentialId, rpId: enrolled.rpId } : null,
+        rpId: enrolled[0]?.rpId ?? rpId ?? null,
+        approvers: enrolled.map(({ credentialId, label }) => ({ credentialId, label: label ?? "" })),
         enrollment: Boolean(rpId && origin),
         asks: open,
       });
@@ -139,9 +141,9 @@ export function createApprovalRoutes({
           };
           // Early feedback only: a fumbled tap is turned back here so the
           // release is not failed by the root check. Root checks again.
-          const enrolled = approver();
-          if (!enrolled) throw new ApprovalError("approval_no_approver_enrolled");
-          verifyAssertion({ askBytes: Buffer.from(ask.askB64, "base64url"), assertion: answer, approver: enrolled });
+          const enrolled = approvers();
+          if (enrolled.length === 0) throw new ApprovalError("approval_no_approver_enrolled");
+          verifyAssertion({ askBytes: Buffer.from(ask.askB64, "base64url"), assertion: answer, approvers: enrolled });
         } else {
           throw new ApprovalError("answer_decision_unknown");
         }
@@ -177,6 +179,8 @@ export function createApprovalRoutes({
         user: { id: b64url(crypto.randomBytes(16)), name: "approver", displayName: "Deploy Manager approver" },
         pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -8 }],
         authenticatorSelection: { userVerification: "required", residentKey: "preferred" },
+        // Already-enrolled authenticators are excluded, so one key is never enrolled twice.
+        excludeCredentials: approvers().map(({ credentialId }) => ({ type: "public-key", id: credentialId })),
         attestation: "none",
         timeout: 120000,
       });
@@ -207,11 +211,12 @@ export function createApprovalRoutes({
           challenge: body.challenge,
           rpId,
           origin,
+          label: body.label,
         });
         sendJson(request, response, 200, {
           ok: true,
           approver: record,
-          install: `sudo install -o root -g root -m 0644 approver.json ${approverFile}`,
+          install: `printf '%s\\n' '${JSON.stringify(record)}' | sudo node /usr/local/libexec/deploy-manager/approval-gate.mjs add-approver --file ${approverFile}`,
         });
       } catch (error) {
         sendJson(request, response, 400, { ok: false, error: error instanceof ApprovalError ? error.code : "registration_unreadable" });

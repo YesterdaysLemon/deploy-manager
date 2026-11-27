@@ -17,12 +17,12 @@
   <body>
     <main>
       <h1>Enroll your passkey</h1>
-      <p class="lede">This makes an approver record from a new passkey. Nothing is installed from here: you copy the record onto the server as root, which is what makes it count.</p>
+      <p class="lede">Each phone or security key you enroll can approve on its own, so a lost one never locks you out. Nothing is installed from here: running the command below on the server as root is what makes a key count.</p>
+      <p><label for="label">Name this key</label><br /><input id="label" maxlength="40" placeholder="phone, keychain YubiKey…" /></p>
       <button class="approve" id="enroll" type="button">Create a passkey</button>
       <p class="status" id="status"></p>
       <div id="result" hidden>
-        <p>Save this as <code>approver.json</code> on the server, then run:</p>
-        <p><code id="install"></code></p>
+        <p>Run this on the server to add the key. It keeps every key already enrolled:</p>
         <textarea id="record" readonly></textarea>
       </div>
     </main>

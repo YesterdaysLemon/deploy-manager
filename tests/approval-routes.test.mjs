@@ -85,7 +85,8 @@ test("the manager lists open asks with the exact bytes to sign and the approval 
     assert.equal(data.asks.length, 1);
     assert.equal(data.asks[0].nonce, ask.nonce);
     assert.equal(Buffer.from(data.asks[0].askB64, "base64url").toString(), askBytes.toString());
-    assert.equal(data.approver.credentialId, key.approver.credentialId);
+    assert.deepEqual(data.approvers.map((k) => k.credentialId), [key.approver.credentialId]);
+    assert.equal(data.rpId, RP_ID);
     const page = await fetch(`${url}/approve`);
     assert.equal(page.status, 200);
     assert.match(page.headers.get("content-security-policy"), /script-src 'self'/);
@@ -124,5 +125,6 @@ test("answers from another origin and asks that do not exist are refused", async
     const options = await (await post(`${url}/api/enroll/options`, {})).json();
     assert.equal(options.rp.id, RP_ID);
     assert.equal(options.authenticatorSelection.userVerification, "required");
+    assert.deepEqual(options.excludeCredentials.map((c) => c.id), [key.approver.credentialId]);
   });
 });
