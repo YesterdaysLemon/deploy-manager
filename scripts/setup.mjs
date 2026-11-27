@@ -79,6 +79,25 @@ function absolutePosixPath(value, label) {
   return result;
 }
 
+// A host directory kept across releases: under /srv, plain characters only,
+// because the deploy script passes it to docker as one unquoted word.
+function dataDirectory(value, label) {
+  const result = absolutePosixPath(value, label);
+  if (!result.startsWith("/srv/") || /[^A-Za-z0-9/._-]/.test(result) || result.includes("..")) {
+    fail(`${label} must be a plain path under /srv/`);
+  }
+  return result;
+}
+
+// A file inside the app's repository, such as deploy/liaison/Dockerfile.
+function repositoryRelativePath(value, label) {
+  const result = requiredString(value, label, 256);
+  if (result.startsWith("/") || result.includes("..") || /[^A-Za-z0-9/._-]/.test(result)) {
+    fail(`${label} must be a plain path inside the repository`);
+  }
+  return result;
+}
+
 function healthPath(value, label) {
   const result = requiredString(value ?? "/healthz", label, 180);
   if (!result.startsWith("/") || result.startsWith("//") || /[\\\u0000-\u001f\u007f#]/.test(result)) {
@@ -141,6 +160,8 @@ function normalizeApp(app, index) {
     hostname: patternString(app?.hostname, `${label}.hostname`, HOSTNAME).toLowerCase(),
     runtimeEnvFile: app?.runtimeEnvFile ? absolutePosixPath(app.runtimeEnvFile, `${label}.runtimeEnvFile`) : undefined,
     dockerNetwork: app?.dockerNetwork ? patternString(app.dockerNetwork, `${label}.dockerNetwork`, DOCKER_NAME) : undefined,
+    dataDirectory: app?.dataDirectory ? dataDirectory(app.dataDirectory, `${label}.dataDirectory`) : undefined,
+    dockerfile: app?.dockerfile ? repositoryRelativePath(app.dockerfile, `${label}.dockerfile`) : undefined,
     datastores: Array.isArray(app?.datastores)
       ? app.datastores.map((idValue, datastoreIndex) => patternString(idValue, `${label}.datastores[${datastoreIndex}]`, APP_ID))
       : [],
@@ -288,6 +309,8 @@ function appEnv(app) {
   ];
   if (app.runtimeEnvFile) values.push(["CONTAINER_ENV_FILE", app.runtimeEnvFile]);
   if (app.dockerNetwork) values.push(["DOCKER_NETWORK", app.dockerNetwork]);
+  if (app.dataDirectory) values.push(["DATA_DIRECTORY", app.dataDirectory]);
+  if (app.dockerfile) values.push(["DOCKERFILE", app.dockerfile]);
   if (app.runtime) values.push(["STATEFUL_RUNTIME_FILE", `/etc/deploy-manager/runtime/${app.id}.json`]);
   return `${values.map(([key, value]) => `${key}=${shellQuote(value)}`).join("\n")}\n`;
 }

@@ -169,3 +169,25 @@ test("emitted notification signs push/manual payloads and checks terminal receip
     }
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
+
+test("an app can keep a data directory across releases and name its Dockerfile", () => {
+  const fleet = exampleFleet();
+  Object.assign(fleet.apps[0], { dataDirectory: "/srv/portfolio/data", dockerfile: "deploy/portfolio/Dockerfile" });
+  const bundle = generateBundle(fleet, "2026-11-26T20:00:00.000Z");
+  const env = bundle.files.get("apps/portfolio.env");
+  assert.match(env, /^DATA_DIRECTORY='\/srv\/portfolio\/data'$/m);
+  assert.match(env, /^DOCKERFILE='deploy\/portfolio\/Dockerfile'$/m);
+  assert.doesNotMatch(bundle.files.get("apps/notes.env"), /DATA_DIRECTORY|DOCKERFILE/);
+
+  for (const [field, value] of [
+    ["dataDirectory", "/var/lib/portfolio"],
+    ["dataDirectory", "/srv/has space"],
+    ["dataDirectory", "/srv/../etc"],
+    ["dockerfile", "/etc/Dockerfile"],
+    ["dockerfile", "../outside/Dockerfile"],
+  ]) {
+    const refused = exampleFleet();
+    refused.apps[0][field] = value;
+    assert.throws(() => normalizeFleetSpec(refused), new RegExp(field), `${field}=${value} should be refused`);
+  }
+});
